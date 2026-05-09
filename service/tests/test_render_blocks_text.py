@@ -26,7 +26,7 @@ def test_paragraph_wraps_long_text(fonts):
         {"type": "paragraph", "text": long}
     ]})
     img = render_document(doc, fonts=fonts)
-    # Wrapped text spans multiple lines: a single-line block is ~26 px, so
+    # Wrapped text spans multiple lines: a single-line block is ~24 px, so
     # multi-line output must clear that comfortably.
     assert img.height > 40
 
@@ -68,7 +68,7 @@ def test_drop_cap_renders(fonts):
     ]})
     img = render_document(doc, fonts=fonts)
     assert img.width == 576
-    assert img.height > 70  # at least the cap height (~80 px)
+    assert img.height > 60  # at least the cap height (~72 px)
 
 
 def test_code_block_preserves_lines(fonts):

@@ -6,16 +6,18 @@ from PIL import Image, ImageDraw, ImageFont
 
 from printer.render.dither import atkinson_dither
 
-# Spleen 12x24 is the body font: 12×24-cell bitmap, native pixel size 24.
-# Bumped from Spleen 8x16 in v0.7.0 — 8x16 reads small at arm's length on
-# 80mm thermal stock, and the 1.5× step to 12x24 lands at the next native
-# Spleen size with no scaling artefacts. Glyphs are 12 px wide, so a 576 px
-# head fits ~48 cols across the live width (528 px / 12 = 44).
-SPLEEN_12X24_NATIVE_PX = 24
+# Body grid for paragraph and list copy. JetBrains Mono Bold @ 18 px is
+# rendered through ``supersample_render`` (2× supersample → Atkinson
+# dither), which lays down a heavier stroke than a 1-px bitmap font and
+# survives the thermal head's tendency to under-print thin lines.
+# Monospace at ~11 px per glyph, so the live width (528 px) fits ~48 cols.
+BODY_TARGET_SIZE_PX = 18
+BODY_GLYPH_PX = 11
+BODY_LINE_H = 24
 
-# Spleen 8x16 is retained for ascii_art ``font: "default"``, where char-grid
-# width matters for layout — 8 px glyphs fit ~72 cols on a 576 px head, and
-# common ASCII compositions are sized for that column count.
+# Spleen 8x16 is the mono font for ascii_art ``font: "default"``, where
+# char-grid width drives layout — 8 px glyphs fit ~72 cols on a 576 px head
+# and common ASCII compositions are sized for that column count.
 SPLEEN_8X16_NATIVE_PX = 16
 
 # Spleen 5x8 is a 5×8-cell bitmap, native pixel size 8. Used for ascii_art
@@ -27,18 +29,19 @@ SPLEEN_5X8_NATIVE_PX = 8
 class FontRegistry:
     """Lazy-loaded font handles for the four families used by the renderer.
 
-    - Body: Spleen 12x24 BDF (bitmap, 24 px native). Reading-size monospace
-      for paragraph and list copy. Bitmap output goes straight to the 1-bit
-      canvas, no dither pass.
-    - Mono: Spleen 8x16 BDF (bitmap, 16 px native). Tighter monospace used
-      where the glyph grid drives layout (ascii_art default).
-    - Small: Spleen 5x8 BDF (bitmap, 8 px native). Same family at quarter
-      size for dense ASCII art compositions.
+    - Body: JetBrains Mono Bold TTF (vector). Reading-size monospace for
+      paragraph and list copy, rendered via ``supersample_render`` so
+      strokes stay heavy on thermal output.
+    - Mono: Spleen 8x16 BDF (bitmap, 16 px native). Tighter monospace
+      used where the glyph grid drives layout (ascii_art default).
+    - Small: Spleen 5x8 BDF (bitmap, 8 px native). Quarter-size bitmap for
+      dense ASCII art compositions.
     - Display: IBM Plex Sans Medium/Bold TTF (vector). Used through
       ``supersample_render`` — rendered at 2× target size, then
       Atkinson-dithered to 1-bit.
     - Code: JetBrains Mono Regular/Bold TTF (vector). Same supersample path
-      when used inside display surfaces.
+      when used inside display surfaces. ``body()`` returns the same handle
+      as ``code(bold=True, size_px=BODY_TARGET_SIZE_PX)``.
     """
 
     def __init__(self, font_dir: str | Path) -> None:
@@ -46,7 +49,6 @@ class FontRegistry:
         self._body: ImageFont.FreeTypeFont | None = None
         self._mono: ImageFont.FreeTypeFont | None = None
         self._small: ImageFont.FreeTypeFont | None = None
-        self._body_bdf = self._d / "spleen" / "spleen-12x24.bdf"
         self._mono_bdf = self._d / "spleen" / "spleen-8x16.bdf"
         self._small_bdf = self._d / "spleen" / "spleen-5x8.bdf"
         self._plex = {
@@ -59,10 +61,10 @@ class FontRegistry:
         }
 
     def body(self) -> ImageFont.FreeTypeFont:
-        """Spleen 12x24 bitmap font at its native 24 px."""
+        """JetBrains Mono Bold at the body target size (vector)."""
         if self._body is not None:
             return self._body
-        self._body = ImageFont.truetype(str(self._body_bdf), size=SPLEEN_12X24_NATIVE_PX)
+        self._body = ImageFont.truetype(str(self._jb["bold"]), size=BODY_TARGET_SIZE_PX)
         return self._body
 
     def mono(self) -> ImageFont.FreeTypeFont:
@@ -150,6 +152,19 @@ def supersample_render(
         from printer.render.dither import ordered_dither
         return ordered_dither(img1x)
     return atkinson_dither(img1x)
+
+
+def render_body_line(text: str, *, fonts: FontRegistry, max_width_px: int) -> Image.Image:
+    """Render a single line of body copy through the supersample + dither
+    path. Empty input is rendered as a single space so callers always get a
+    paste-able image whose height matches the body grid.
+    """
+    return supersample_render(
+        text=text or " ",
+        font=fonts.body(),
+        target_size_px=BODY_TARGET_SIZE_PX,
+        max_width_px=max_width_px,
+    )
 
 
 # Synthetic italic shear angle. ~12° matches typical "oblique" faces and is

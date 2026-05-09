@@ -41,6 +41,27 @@ and the migration hint surfaced in 400 responses.
   maps to `unknown_partial` per spec — the boundary is "did any byte hit
   the printer?" not "did anything go wrong?".
 
+## v0.7.1
+
+Renderer follow-up to v0.7.0 (no public schema change).
+
+- **Body font: Spleen 12x24 → JetBrains Mono Bold @ 18 px.** v0.7.0
+  bumped to Spleen 12x24 to fix legibility, but the bitmap font has
+  ~1-px strokes and thermal heads under-print thin lines, so it still
+  printed pale. JetBrains Mono Bold rendered through the supersample +
+  Atkinson-dither path (the same pipeline display headers use) lays
+  down a heavier, blacker stroke that survives the head's heat
+  transfer. Same monospace character; ~48 cols fit across the live
+  width. Drop-cap size scales 80 → 72 px to keep the 3-body-line wrap.
+- **Refactor: every body-text caller goes through ``render_body_line``.**
+  Paragraph, drop_cap, bullets, checklist, numbered, kv, and
+  table_compact now render each line via the supersample helper
+  instead of a direct ``ImageDraw.text()`` call. kv collapses to a
+  single-font two-column layout because the body and value columns
+  share the same JetBrains Mono Bold handle.
+- **Drop: Spleen 12x24 BDF.** No longer used; removed from
+  ``assets/fonts/spleen/``.
+
 ## v0.7.0
 
 Renderer bump (no public schema change).

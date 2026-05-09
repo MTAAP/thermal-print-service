@@ -7,7 +7,7 @@ def test_checklist_renders_one_box_per_item(fonts):
         {"type": "checklist", "items": ["a", "b", "c"]},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 3  # at least one line per item
+    assert img.height >= 24 * 3  # at least one line per item
 
 
 def test_kv_renders_two_columns(fonts):
@@ -16,7 +16,7 @@ def test_kv_renders_two_columns(fonts):
                                   {"key": "k2", "value": "v2"}]},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 2
+    assert img.height >= 24 * 2
 
 
 def test_bullets_with_default_marker(fonts):
@@ -24,7 +24,7 @@ def test_bullets_with_default_marker(fonts):
         {"type": "bullets", "items": ["one", "two", "three"]},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 3
+    assert img.height >= 24 * 3
 
 
 def test_bullets_em_dash_marker(fonts):
@@ -32,7 +32,7 @@ def test_bullets_em_dash_marker(fonts):
         {"type": "bullets", "items": ["a", "b"], "marker": "—"},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 2
+    assert img.height >= 24 * 2
 
 
 def test_numbered_renders_count_prefix(fonts):
@@ -40,7 +40,7 @@ def test_numbered_renders_count_prefix(fonts):
         {"type": "numbered", "items": ["alpha", "beta", "gamma"]},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 3
+    assert img.height >= 24 * 3
 
 
 def test_numbered_handles_double_digit_count(fonts):
@@ -49,7 +49,7 @@ def test_numbered_handles_double_digit_count(fonts):
         {"type": "numbered", "items": items},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 12
+    assert img.height >= 24 * 12
 
 
 def test_table_compact_two_columns(fonts):
@@ -84,8 +84,8 @@ def test_bullets_wrap_long_items(fonts):
         {"type": "bullets", "items": [long_item, long_item]},
     ]})
     img = render_document(doc, fonts=fonts)
-    # Each item should occupy at least three 26-px lines after wrap
-    assert img.height >= 26 * 3 * 2 - 4
+    # Each item should occupy at least three body lines after wrap
+    assert img.height >= 24 * 3 * 2 - 4
 
 
 def test_checklist_wrap_long_items(fonts):
@@ -94,7 +94,7 @@ def test_checklist_wrap_long_items(fonts):
         {"type": "checklist", "items": [long_item]},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 2
+    assert img.height >= 24 * 2
 
 
 def test_numbered_wrap_long_items(fonts):
@@ -103,7 +103,7 @@ def test_numbered_wrap_long_items(fonts):
         {"type": "numbered", "items": [long_item]},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height >= 26 * 2
+    assert img.height >= 24 * 2
 
 
 def test_kv_wrap_long_values(fonts):
@@ -113,4 +113,4 @@ def test_kv_wrap_long_values(fonts):
     ]})
     img = render_document(doc, fonts=fonts)
     # Value should wrap to at least two lines at the narrower body grid
-    assert img.height >= 26 * 2
+    assert img.height >= 24 * 2
