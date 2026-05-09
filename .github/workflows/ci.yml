@@ -8,7 +8,9 @@ on:
 jobs:
   service:
     name: service py${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on:
+      group: Default
+      labels: [self-hosted, Linux, X64, mtaap]
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +32,9 @@ jobs:
 
   mcp-server:
     name: mcp-server py${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on:
+      group: Default
+      labels: [self-hosted, Linux, X64, mtaap]
     strategy:
       fail-fast: false
       matrix:
