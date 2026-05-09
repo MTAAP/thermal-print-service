@@ -1,89 +1,134 @@
 from __future__ import annotations
 
+import textwrap
+
 from PIL import Image, ImageDraw
 
 from printer.constants import LIVE_WIDTH_PX
 from printer.render.blocks import register
 
+# Spleen 12x24 body grid: 12 px wide glyphs, 24 px native cell, 26 px line
+# step (24 + 2 px lead). All list blocks share these constants so item
+# wrap widths and inter-item spacing stay aligned across the renderer.
+_BODY_GLYPH_PX = 12
+_BODY_LINE_H = 26
+
+
+def _wrap_item(text: str, *, width_px: int) -> list[str]:
+    chars = max(8, width_px // _BODY_GLYPH_PX)
+    return textwrap.wrap(text, width=chars) or [text]
+
 
 @register("checklist")
 def render_checklist(block, ctx) -> Image.Image:
     font = ctx.fonts.body()
-    box_size = 12
-    line_h = 18
-    h = line_h * len(block.items) + 4
+    box_size = 16
+    text_x = 2 + box_size + 8
+    text_w = LIVE_WIDTH_PX - text_x
+    wrapped = [_wrap_item(item, width_px=text_w) for item in block.items]
+    total_lines = sum(len(lines) for lines in wrapped)
+    h = _BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
-    for i, item in enumerate(block.items):
-        y = i * line_h
-        d.rectangle([2, y + 3, 2 + box_size, y + 3 + box_size], outline=0, width=1)
-        d.text((2 + box_size + 6, y), item, fill=0, font=font)
+    y = 0
+    for lines in wrapped:
+        d.rectangle([2, y + 4, 2 + box_size, y + 4 + box_size], outline=0, width=1)
+        for li, line in enumerate(lines):
+            d.text((text_x, y + li * _BODY_LINE_H), line, fill=0, font=font)
+        y += _BODY_LINE_H * len(lines)
     return canvas
 
 
 @register("kv")
 def render_kv(block, ctx) -> Image.Image:
     body = ctx.fonts.body()
-    code = ctx.fonts.code(size_px=12)
-    line_h = 18
-    h = line_h * len(block.pairs) + 4
+    # JetBrains Mono at 18 px sits visually between the 12 px body grid and
+    # display sizes, keeping the value column legible next to the larger
+    # 24 px body keys without dwarfing them.
+    code = ctx.fonts.code(size_px=18)
+    key_col_w = 200
+    key_text_w = key_col_w - 8  # gutter so wrapped keys don't kiss the value column
+    value_text_w = LIVE_WIDTH_PX - key_col_w
+    # Code font is roughly 11 px wide at size 18 — slightly narrower than
+    # the 12 px body grid, so values fit a couple more chars per line.
+    value_chars = max(8, value_text_w // 11)
+    pair_renders: list[tuple[list[str], list[str]]] = []
+    for p in block.pairs:
+        key_lines = _wrap_item(p.key, width_px=key_text_w)
+        value_lines = textwrap.wrap(p.value, width=value_chars) or [p.value]
+        pair_renders.append((key_lines, value_lines))
+    total_lines = sum(max(len(k), len(v)) for k, v in pair_renders)
+    h = _BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
-    key_col_w = 180
-    for i, p in enumerate(block.pairs):
-        y = i * line_h
-        d.text((0, y), p.key, fill=0, font=body)
-        d.text((key_col_w, y), p.value, fill=0, font=code)
+    y = 0
+    for key_lines, value_lines in pair_renders:
+        rows = max(len(key_lines), len(value_lines))
+        for li in range(rows):
+            row_y = y + li * _BODY_LINE_H
+            if li < len(key_lines):
+                d.text((0, row_y), key_lines[li], fill=0, font=body)
+            if li < len(value_lines):
+                d.text((key_col_w, row_y), value_lines[li], fill=0, font=code)
+        y += _BODY_LINE_H * rows
     return canvas
 
 
 @register("bullets")
 def render_bullets(block, ctx) -> Image.Image:
     font = ctx.fonts.body()
-    line_h = 18
-    h = line_h * len(block.items) + 4
+    marker_x = 4
+    text_x = marker_x + 24
+    text_w = LIVE_WIDTH_PX - text_x
+    wrapped = [_wrap_item(item, width_px=text_w) for item in block.items]
+    total_lines = sum(len(lines) for lines in wrapped)
+    h = _BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
-    for i, item in enumerate(block.items):
-        y = i * line_h
-        d.text((4, y), block.marker, fill=0, font=font)
-        d.text((4 + 18, y), item, fill=0, font=font)
+    y = 0
+    for lines in wrapped:
+        d.text((marker_x, y), block.marker, fill=0, font=font)
+        for li, line in enumerate(lines):
+            d.text((text_x, y + li * _BODY_LINE_H), line, fill=0, font=font)
+        y += _BODY_LINE_H * len(lines)
     return canvas
 
 
 @register("numbered")
 def render_numbered(block, ctx) -> Image.Image:
     font = ctx.fonts.body()
-    line_h = 18
     n = len(block.items)
-    # Column width sized to the widest prefix (e.g. "100." for n>=100, "10." for n>=10)
     longest = f"{n}."
     try:
         bbox = font.getbbox(longest)
-        prefix_col_w = (bbox[2] - bbox[0]) + 6
+        prefix_col_w = (bbox[2] - bbox[0]) + 8
     except Exception:
-        prefix_col_w = 28
-    h = line_h * n + 4
+        prefix_col_w = len(longest) * _BODY_GLYPH_PX + 8
+    text_w = LIVE_WIDTH_PX - prefix_col_w
+    wrapped = [_wrap_item(item, width_px=text_w) for item in block.items]
+    total_lines = sum(len(lines) for lines in wrapped)
+    h = _BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
-    for i, item in enumerate(block.items):
-        y = i * line_h
+    y = 0
+    for i, lines in enumerate(wrapped):
         prefix = f"{i + 1}."
         try:
             pb = font.getbbox(prefix)
             pw = pb[2] - pb[0]
         except Exception:
-            pw = len(prefix) * 6
-        # Right-align the prefix within prefix_col_w
+            pw = len(prefix) * _BODY_GLYPH_PX
         d.text((prefix_col_w - pw - 4, y), prefix, fill=0, font=font)
-        d.text((prefix_col_w, y), item, fill=0, font=font)
+        for li, line in enumerate(lines):
+            d.text((prefix_col_w, y + li * _BODY_LINE_H), line, fill=0, font=font)
+        y += _BODY_LINE_H * len(lines)
     return canvas
 
 
 @register("table_compact")
 def render_table_compact(block, ctx) -> Image.Image:
     font = ctx.fonts.body()
-    line_h = 16
+    line_h = 24
     rows = block.rows
     cols = len(rows[0])
     headers = block.headers
@@ -100,7 +145,7 @@ def render_table_compact(block, ctx) -> Image.Image:
                 bb = font.getbbox(t)
                 w = bb[2] - bb[0]
             except Exception:
-                w = len(t) * 6
+                w = len(t) * _BODY_GLYPH_PX
             if w > widest:
                 widest = w
         col_widths.append(widest + 12)  # 12 px gutter

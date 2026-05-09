@@ -52,10 +52,10 @@ def render_section_title(block, ctx) -> Image.Image:
 @register("paragraph")
 def render_paragraph(block, ctx) -> Image.Image:
     font = ctx.fonts.body()
-    avg_glyph_px = 8  # Spleen 8x16 body, monospace
+    avg_glyph_px = 12  # Spleen 12x24 body, monospace
     chars_per_line = max(20, LIVE_WIDTH_PX // avg_glyph_px)
     wrapped = textwrap.wrap(block.text, width=chars_per_line) or [block.text]
-    line_h = 18
+    line_h = 26
     canvas = Image.new("1", (LIVE_WIDTH_PX, line_h * len(wrapped) + 4), 1)
     d = ImageDraw.Draw(canvas)
     y = 0
@@ -136,12 +136,12 @@ def render_pull_quote(block, ctx) -> Image.Image:
 
 @register("drop_cap")
 def render_drop_cap(block, ctx) -> Image.Image:
-    # 56 px caps printed thin under the default 2×-Atkinson pipeline because
+    # Caps printed thin under the default 2×-Atkinson pipeline because
     # error diffusion thins large solid regions. Render at 4× supersample
     # and ordered (Bayer 8x8) dither: ordered keeps large solid regions
     # saturated, and the higher supersample carries richer luminance into
-    # each output pixel.
-    cap_size = 56
+    # each output pixel. Cap is sized to roughly three lines of 24 px body.
+    cap_size = 80
     cap_img = supersample_render(
         text=block.first_letter,
         font=ctx.fonts.display(weight="bold", size_px=cap_size),
@@ -151,9 +151,9 @@ def render_drop_cap(block, ctx) -> Image.Image:
     cap_w = cap_img.width
     cap_h = cap_img.height
     body_font = ctx.fonts.body()
-    line_h = 18
+    line_h = 26
     indent = cap_w + 6
-    avg_glyph_px = 8  # Spleen 8x16 body, monospace
+    avg_glyph_px = 12  # Spleen 12x24 body, monospace
     full_chars = max(20, LIVE_WIDTH_PX // avg_glyph_px)
     indented_chars = max(20, (LIVE_WIDTH_PX - indent) // avg_glyph_px)
 

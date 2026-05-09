@@ -117,13 +117,16 @@ def render_barcode(block, ctx) -> Image.Image:
 
 @register("ascii_art")
 def render_ascii_art(block, ctx) -> Image.Image:
-    # ``default`` uses Cozette 13 px (~46 cols at glyph width 6); ``small``
+    # ``default`` uses Spleen 8x16 (~72 cols at glyph width 8); ``small``
     # uses Spleen 5x8 (~115 cols at glyph width 5) for dense compositions.
+    # ascii_art keeps the tighter mono grid even though body() is now
+    # Spleen 12x24 — char-grid art is sized for fixed column counts and
+    # 12 px glyphs would reflow most pieces past the live width.
     if block.font == "small":
         font = ctx.fonts.small()
         line_h = 9
     else:
-        font = ctx.fonts.body()
+        font = ctx.fonts.mono()
         line_h = 18
     lines = block.text.split("\n") or [""]
     h = line_h * len(lines) + 4

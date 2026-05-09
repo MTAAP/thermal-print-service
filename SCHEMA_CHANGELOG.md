@@ -41,6 +41,26 @@ and the migration hint surfaced in 400 responses.
   maps to `unknown_partial` per spec — the boundary is "did any byte hit
   the printer?" not "did anything go wrong?".
 
+## v0.7.0
+
+Renderer bump (no public schema change).
+
+- **Body font: Spleen 8x16 → Spleen 12x24.** Paragraph and list copy now
+  render at 24 px native instead of 16 px (~1.5× larger), the next size
+  up in the Spleen distribution. Reading a morning brief at arm's length
+  is the forcing function — 8x16 reads small on 80mm thermal stock.
+  ~44 cols fit across the live width (528 px) instead of ~66. Drop-cap
+  size scales 56 → 80 px to keep the 3-line wrap rhythm. ascii_art
+  ``font: "default"`` keeps Spleen 8x16 (now exposed via `fonts.mono()`)
+  because char-grid art is sized for fixed column counts.
+- **Fix: bullets/checklist/numbered/kv now wrap long items.** Before
+  this change every list block drew each item as a single un-wrapped
+  ``ImageDraw.text()`` call — text past the live width was silently
+  truncated at the canvas edge. Items now wrap at the body grid width
+  with a hanging indent that matches the marker / box / prefix offset,
+  matching how `paragraph` already wraps. Vertical extent grows with
+  the wrapped line count.
+
 ## v0.6.0
 
 Renderer + behavior bump (no public schema change). Closes the four

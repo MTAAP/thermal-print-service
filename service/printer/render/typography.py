@@ -6,26 +6,34 @@ from PIL import Image, ImageDraw, ImageFont
 
 from printer.render.dither import atkinson_dither
 
-# Spleen 8x16 is the body font: 8×16-cell bitmap, native pixel size 16.
-# Replaced Cozette 13 px in v0.6.0 — Cozette renders dense and crisp but
-# requires concentration at arm's length, while Spleen 8x16 is the
-# canonical terminal-readable size on thermal output. Glyphs are 8 px
-# wide, so a 576 px head fits ~72 cols.
+# Spleen 12x24 is the body font: 12×24-cell bitmap, native pixel size 24.
+# Bumped from Spleen 8x16 in v0.7.0 — 8x16 reads small at arm's length on
+# 80mm thermal stock, and the 1.5× step to 12x24 lands at the next native
+# Spleen size with no scaling artefacts. Glyphs are 12 px wide, so a 576 px
+# head fits ~48 cols across the live width (528 px / 12 = 44).
+SPLEEN_12X24_NATIVE_PX = 24
+
+# Spleen 8x16 is retained for ascii_art ``font: "default"``, where char-grid
+# width matters for layout — 8 px glyphs fit ~72 cols on a 576 px head, and
+# common ASCII compositions are sized for that column count.
 SPLEEN_8X16_NATIVE_PX = 16
 
 # Spleen 5x8 is a 5×8-cell bitmap, native pixel size 8. Used for ascii_art
-# ``font: "small"`` where Spleen 8x16 is too big to fit common ASCII art
+# ``font: "small"`` where Spleen 8x16 is too big to fit dense ASCII art
 # compositions on a 576 px head (~72 cols at 8 px vs ~115 at 5 px).
 SPLEEN_5X8_NATIVE_PX = 8
 
 
 class FontRegistry:
-    """Lazy-loaded font handles for the three families used by the renderer.
+    """Lazy-loaded font handles for the four families used by the renderer.
 
-    - Body: Spleen 8x16 BDF (bitmap, 16 px native). Bitmap font — output
-      goes straight to the 1-bit canvas, no dither pass.
-    - Small: Spleen 5x8 BDF (bitmap, 8 px native). Same family at half size
-      for dense ASCII art compositions.
+    - Body: Spleen 12x24 BDF (bitmap, 24 px native). Reading-size monospace
+      for paragraph and list copy. Bitmap output goes straight to the 1-bit
+      canvas, no dither pass.
+    - Mono: Spleen 8x16 BDF (bitmap, 16 px native). Tighter monospace used
+      where the glyph grid drives layout (ascii_art default).
+    - Small: Spleen 5x8 BDF (bitmap, 8 px native). Same family at quarter
+      size for dense ASCII art compositions.
     - Display: IBM Plex Sans Medium/Bold TTF (vector). Used through
       ``supersample_render`` — rendered at 2× target size, then
       Atkinson-dithered to 1-bit.
@@ -36,8 +44,10 @@ class FontRegistry:
     def __init__(self, font_dir: str | Path) -> None:
         self._d = Path(font_dir)
         self._body: ImageFont.FreeTypeFont | None = None
+        self._mono: ImageFont.FreeTypeFont | None = None
         self._small: ImageFont.FreeTypeFont | None = None
-        self._body_bdf = self._d / "spleen" / "spleen-8x16.bdf"
+        self._body_bdf = self._d / "spleen" / "spleen-12x24.bdf"
+        self._mono_bdf = self._d / "spleen" / "spleen-8x16.bdf"
         self._small_bdf = self._d / "spleen" / "spleen-5x8.bdf"
         self._plex = {
             "medium": self._d / "plex" / "IBMPlexSans-Medium.ttf",
@@ -49,11 +59,18 @@ class FontRegistry:
         }
 
     def body(self) -> ImageFont.FreeTypeFont:
-        """Spleen 8x16 bitmap font at its native 16 px."""
+        """Spleen 12x24 bitmap font at its native 24 px."""
         if self._body is not None:
             return self._body
-        self._body = ImageFont.truetype(str(self._body_bdf), size=SPLEEN_8X16_NATIVE_PX)
+        self._body = ImageFont.truetype(str(self._body_bdf), size=SPLEEN_12X24_NATIVE_PX)
         return self._body
+
+    def mono(self) -> ImageFont.FreeTypeFont:
+        """Spleen 8x16 bitmap font at its native 16 px."""
+        if self._mono is not None:
+            return self._mono
+        self._mono = ImageFont.truetype(str(self._mono_bdf), size=SPLEEN_8X16_NATIVE_PX)
+        return self._mono
 
     def small(self) -> ImageFont.FreeTypeFont:
         """Spleen 5x8 bitmap font at its native 8 px."""
