@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  service:
+    name: service py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install service
+        run: python -m pip install -e 'service[dev]'
+      - name: Test service
+        run: python -m pytest service/tests
+      - name: Lint service
+        run: python -m ruff check service
+      - name: Typecheck service
+        working-directory: service
+        run: python -m mypy printer
+
+  mcp-server:
+    name: mcp-server py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install MCP server
+        run: python -m pip install -e 'mcp-server[dev]'
+      - name: Test MCP server
+        run: python -m pytest mcp-server/tests
+      - name: Lint MCP server
+        run: python -m ruff check mcp-server
+      - name: Typecheck MCP server
+        working-directory: mcp-server
+        run: python -m mypy printer_mcp

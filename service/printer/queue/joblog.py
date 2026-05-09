@@ -59,7 +59,8 @@ class JobRecord:
 
     @classmethod
     def accepted(cls, *, job_id: str, sender: str | None, document_type: str | None,
-                 idempotency_key: str | None, payload_hash: str, kind: str,
+                 idempotency_key: str | None, payload_hash: str,
+                 kind: Literal["document", "raw"],
                  estimated_paper_mm: int, renderer_version: str,
                  auto_cut: bool = True, feed_lines_after: int = 2,
                  expires_at: str | None = None,

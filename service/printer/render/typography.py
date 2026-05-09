@@ -130,11 +130,11 @@ class FontRegistry:
         """Pixel width of an atom under the body grid, picking the body
         primary or CJK fallback font based on per-codepoint coverage. Used
         by wrap helpers that need to measure atoms before rendering."""
-        primary_keys = _font_cmap_keys(self.body().path)
+        primary_keys = _font_cmap_keys(str(self.body().path))
         font = self.body()
         if not all(ord(c) in primary_keys for c in atom) and self.has_cjk_font():
             font = self.cjk(bold=True)
-        return font.getbbox(atom)[2]
+        return int(font.getbbox(atom)[2])
 
 
 def iter_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
@@ -145,7 +145,7 @@ def iter_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
     font's cmap (CJK and other non-Latin scripts) break per character so
     spaceless scripts can wrap mid-run.
     """
-    primary_keys = _font_cmap_keys(fonts.body().path)
+    primary_keys = _font_cmap_keys(str(fonts.body().path))
     word: list[str] = []
     space: list[str] = []
     for ch in text:
@@ -313,7 +313,7 @@ def supersample_render(
             max_width_px=max_width_px, color=color, factor=factor, dither=dither,
         )
 
-    primary_keys = _font_cmap_keys(font.path)
+    primary_keys = _font_cmap_keys(str(font.path))
     if all(ord(c) in primary_keys for c in text):
         return _render_single_font(
             text=text, font=font, target_size_px=target_size_px,
@@ -422,9 +422,9 @@ def apply_italic(img: Image.Image, shear: float = _ITALIC_SHEAR) -> Image.Image:
     grey = img.convert("L")
     sheared = grey.transform(
         (new_w, img.height),
-        Image.AFFINE,
+        Image.Transform.AFFINE,
         (1, shear, -shear * (img.height - 1), 0, 1, 0),
-        resample=Image.BICUBIC,
+        resample=Image.Resampling.BICUBIC,
         fillcolor=255,
     )
     return sheared.point(lambda v: 0 if v < 128 else 255).convert("1")

@@ -5,6 +5,7 @@ generic 500. Pre-fix, ``render_document`` raised a generic ``Exception``
 which the app wrapped into a 500 — misclassifying client errors as
 server faults and inviting blind retries."""
 import base64
+import dataclasses
 import io
 import json
 
@@ -76,3 +77,23 @@ async def test_image_block_valid_png_still_renders(fake_deps):
         r = await ac.post("/print", content=body,
                           headers={"Content-Type": "application/json"})
     assert r.status_code == 202, r.text
+
+
+@pytest.mark.asyncio
+async def test_image_block_rejects_images_over_decoded_pixel_cap(fake_deps):
+    fake_deps.config = dataclasses.replace(fake_deps.config, max_decoded_image_pixels=50)
+    buf = io.BytesIO()
+    Image.new("1", (51, 1), 1).save(buf, format="PNG")
+    good_png = base64.b64encode(buf.getvalue()).decode()
+    body = json.dumps({
+        "blocks": [
+            {"type": "image", "png_base64": good_png, "width_px": 51,
+             "align": "center", "bleed": False, "dither": "atkinson"},
+        ],
+    }).encode()
+    app = create_app(fake_deps)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print", content=body,
+                          headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+    assert r.json()["reason"] == "max_decoded_image_pixels"

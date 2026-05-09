@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib import request
 
 from printer.calibration import build_calibration_ruler
 from printer.transport.escpos_file import FilePrinter
@@ -76,10 +79,34 @@ def cmd_run(args: argparse.Namespace) -> int:
                 latest = r.ts
         return latest
 
+    def _last_error() -> str | None:
+        latest: str | None = None
+        for r in log.replay():
+            if r.event in {"retry", "expired", "retry_timeout", "unknown_partial"}:
+                latest = r.detail or r.event
+        return latest
+
+    def _oldest_pending_age_s() -> int | None:
+        pending = log.pending_after_replay()
+        if not pending:
+            return None
+        ts = pending[0].ts
+        try:
+            if ts.endswith("Z"):
+                ts = ts[:-1] + "+00:00"
+            accepted_at = datetime.fromisoformat(ts)
+            if accepted_at.tzinfo is None:
+                accepted_at = accepted_at.replace(tzinfo=UTC)
+        except (ValueError, TypeError):
+            return None
+        return max(0, int(time.time() - accepted_at.timestamp()))
+
     health = HealthCollector(
         status_reader=StatusReader(supports_status=False),
         queue_depth=lambda: len(log.pending_after_replay()),
         last_print_at=_last_print_at,
+        last_error=_last_error,
+        oldest_pending_age_s=_oldest_pending_age_s,
         process_started_at=started_at,
         clock_now=lambda: time.time(),
     )
@@ -102,8 +129,26 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_test_print(args: argparse.Namespace) -> int:
-    print("printer-svc test-print: Phase 3 not yet implemented", file=sys.stderr)
-    return 1
+    url = (args.url or os.environ.get("PRINTER_SERVICE_URL") or
+           f"http://{os.environ.get('PRINTER_HOST', '127.0.0.1')}:"
+           f"{os.environ.get('PRINTER_PORT', '8000')}")
+    url = url.rstrip("/") + "/test"
+    req = request.Request(url, method="POST")
+    try:
+        with request.urlopen(req, timeout=args.timeout) as resp:
+            body = resp.read().decode("utf-8")
+            try:
+                parsed = json.loads(body)
+                body = json.dumps(parsed, indent=2)
+            except json.JSONDecodeError:
+                pass
+            print(f"{resp.status} {url}")
+            if body:
+                print(body)
+        return 0
+    except OSError as exc:
+        print(f"printer-svc test-print failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -121,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(func=cmd_run)
 
     t = sub.add_parser("test-print", help="POST the bundled test page")
+    t.add_argument("--url", default=None,
+                   help="service base URL (default: PRINTER_SERVICE_URL or host/port env)")
+    t.add_argument("--timeout", type=float, default=30.0)
     t.set_defaults(func=cmd_test_print)
 
     ns = p.parse_args(argv)

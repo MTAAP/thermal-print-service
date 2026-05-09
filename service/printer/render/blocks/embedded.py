@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, UnidentifiedImageError
 from printer.constants import LIVE_WIDTH_PX, PRINT_HEAD_WIDTH_PX
 from printer.render.blocks import register
 from printer.render.dither import DITHERS
-from printer.render.errors import RenderInputError
+from printer.render.errors import RenderInputError, RenderResourceLimitError
 
 
 @register("qr")
@@ -39,8 +39,12 @@ def render_image(block, ctx) -> Image.Image:
             f"image.png_base64 is not valid base64: {exc}", field="png_base64",
         ) from exc
     try:
-        img = Image.open(io.BytesIO(raw))
+        img: Image.Image = Image.open(io.BytesIO(raw))
+        if img.width * img.height > ctx.max_decoded_image_pixels:
+            raise RenderResourceLimitError("max_decoded_image_pixels")
         img.load()
+    except RenderResourceLimitError:
+        raise
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise RenderInputError(
             f"image.png_base64 did not decode as a readable image: {exc}",
