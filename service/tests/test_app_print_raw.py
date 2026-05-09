@@ -1,3 +1,4 @@
+import dataclasses
 import io
 
 import pytest
@@ -33,6 +34,27 @@ async def test_print_raw_rejects_wrong_width(fake_deps):
                           headers={"Content-Type": "image/png"})
     assert r.status_code == 400
     assert r.json()["errors"][0]["field"] == "width"
+
+
+@pytest.mark.asyncio
+async def test_print_raw_rejects_non_png_content_type(fake_deps):
+    app = create_app(fake_deps)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print/raw", content=_png_bytes(),
+                          headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 400
+    assert r.json()["errors"][0]["field"] == "Content-Type"
+
+
+@pytest.mark.asyncio
+async def test_print_raw_rejects_images_over_decoded_pixel_cap(fake_deps):
+    fake_deps.config = dataclasses.replace(fake_deps.config, max_decoded_image_pixels=575)
+    app = create_app(fake_deps)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print/raw", content=_png_bytes(width=576, height=1),
+                          headers={"Content-Type": "image/png"})
+    assert r.status_code == 413
+    assert r.json()["reason"] == "max_decoded_image_pixels"
 
 
 @pytest.mark.asyncio

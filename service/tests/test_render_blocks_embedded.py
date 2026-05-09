@@ -69,7 +69,7 @@ def test_ascii_art_default_renders(fonts):
 
 
 def test_ascii_art_small_uses_smaller_font(fonts):
-    """``font: "small"`` switches from Cozette 13 px to Spleen 5x8, so a
+    """``font: "small"`` switches from Spleen 8x16 to Spleen 5x8, so a
     multi-line composition is shorter (smaller line height) AND the rendered
     glyphs occupy a different raster than the default font."""
     art = "line1\nline2\nline3"
@@ -81,13 +81,14 @@ def test_ascii_art_small_uses_smaller_font(fonts):
     ]}), fonts=fonts)
     assert small.height < big.height
     # Different fonts produce different raster output. Identical bytes would
-    # mean ``font: "small"`` regressed to reusing Cozette.
+    # mean ``font: "small"`` regressed to reusing the default face.
     assert small.tobytes() != big.tobytes()
 
 
 def test_ascii_art_small_fits_wide_composition(fonts):
     """Spleen 5x8 should accommodate denser horizontal compositions than
-    Cozette. A ~100-column line should not clip the canvas at 576 px."""
+    the default Spleen 8x16 face. A ~100-column line should not clip the
+    canvas at 576 px."""
     wide = "x" * 100
     img = render_document(Document.model_validate({"blocks": [
         {"type": "ascii_art", "text": wide, "font": "small"}

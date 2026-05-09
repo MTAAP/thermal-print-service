@@ -1,8 +1,8 @@
 # Thermal Print Service — Project Spec
 
 **Owner:** Maintainer
-**Status:** Draft v0.4
-**Last updated:** 2026-05-08
+**Status:** Living implementation spec
+**Last updated:** 2026-05-09
 **Scope:** Printer-service substrate only. Sender composition logic (what gets printed, when, by whom) is explicitly out of scope and belongs in each sender's spec.
 
 ## 1. Vision
@@ -26,7 +26,7 @@ Secondary goal: make this the easiest substrate to add new ambient print jobs to
 
 | Component | Choice | Notes |
 |---|---|---|
-| Printer | NetumScan 80mm, USB+Ethernet, ESC/POS | 576 dots/line, 220mm/s, auto-cutter, EPSON command set confirmed on self-test. DPI ≈ 180–203 depending on actual print-head coverage (most 80mm thermals are 576 dots over ~72mm = 203 DPI; a smaller subset are edge-to-edge ~80mm = 180 DPI). **Pin via Phase 1 calibration; do not assume.** |
+| Printer | NetumScan 80mm, USB+Ethernet, ESC/POS | 576 dots/line, 220mm/s, auto-cutter, EPSON command set confirmed on self-test. Calibrated at 8.0 dots/mm on 2026-05-09. |
 | Compute | Raspberry Pi Zero 2 W | Quad-core, 512MB, built-in 2.4GHz WiFi + BT 4.2 |
 | Connection | Pi → printer via USB (OTG cable) | Printer's Ethernet unused; Pi is the only network endpoint |
 | Power | 2× wall plugs: 12V brick (printer) + USB-C 5V (Pi) | Single dual-outlet, fully portable |
@@ -98,9 +98,10 @@ The renderer is the single source of typographic truth. Every text block, every 
 
 | Role | Font | Notes |
 |---|---|---|
-| Body (paragraph, checklist, kv, bullets, numbered) | **Cozette 13px** (BDF/PCF bitmap) | Pixel-perfect at 1-bit; surgical clarity at body sizes. Exact bundled files are pinned in Phase 3; if true bold/italic bitmap faces are unavailable, the renderer uses deterministic synthetic bold/slant rather than system-font fallback. ~88 chars/line in 528 px live area. |
+| Body (paragraph, checklist, kv, bullets, numbered) | **JetBrains Mono Bold 18px** | Vector, rendered through the same supersample + Atkinson path as display text. This prints darker and more legibly than the earlier bitmap-body experiments. ~48 chars/line in 528 px live area. |
 | Display (header, section_title, large_text, drop_cap, pull_quote) | **IBM Plex Sans Medium / Bold** | Vector. Rendered at 2× target size, then Atkinson-dithered to 1-bit to avoid antialias→threshold muddiness. |
 | Code (code blocks, kv values where monospace alignment matters) | **JetBrains Mono Regular / Bold** | Vector. Same 2×→Atkinson treatment. |
+| CJK fallback | **Noto Sans SC Regular / Bold** | Used for codepoints missing from the primary font. Wrapping is atom-aware: Latin words break at whitespace, non-primary-cmap codepoints can break per character. |
 
 **Atkinson downsampling for vector text:** PIL renders vector glyphs to 8-bit greyscale at 2× the target raster size, then a single Atkinson dither pass produces the 1-bit output. This avoids the "muddy at small sizes" failure mode of naive PIL→threshold and gives display headlines a clean weighted edge.
 
@@ -150,7 +151,7 @@ Responses:
   503 Service Unavailable
     { "reason": "queue_full" }
   413 Payload Too Large
-    { "reason": "max_request_bytes" | "max_rendered_height_px" | "max_raw_height_px" }
+    { "reason": "max_request_bytes" | "max_rendered_height_px" | "max_raw_height_px" | "max_decoded_image_pixels" }
 ```
 
 The 400 error shape is contractual: every validator error includes `valid_values` for enum violations, and a `migration_hint` (string or null) for fields whose semantics moved between renderer versions. Senders get self-service recovery info; no out-of-band lookup required.
@@ -163,7 +164,7 @@ Idempotency scope is `(X-Sender || "anonymous", X-Idempotency-Key)`. A byte-iden
 
 For when an agent legitimately needs pixel control (photo prints, generative art, ASCII pieces the schema can't express). Accepts `Content-Type: image/png`, must decode as PNG, and must be exactly 576px wide. Same headers, same idempotency behavior, same durable acceptance rule, but no block-schema validation.
 
-Raw PNGs still pass resource guards before acceptance: `max_request_bytes` and `max_raw_height_px` are service config values, with `max_raw_height_px` defaulting to the pixel height equivalent of `max_length_mm: 2000` after Phase 1 calibration. Malformed PNGs return `400`; oversized PNGs return `413`.
+Raw PNGs still pass resource guards before acceptance: `max_request_bytes`, `max_raw_height_px`, and `max_decoded_image_pixels` are service config values. Malformed PNGs return `400`; oversized PNGs return `413`.
 
 ### `GET /schema`
 
@@ -181,6 +182,8 @@ Response: `{ "blocks": [...], "renderer_version": "1.4.2", "changelog_url": "...
   "clock_synchronized": true,
   "queue_depth": 0,
   "last_print_at": "2026-05-09T06:30:14Z",
+  "last_error": null,
+  "oldest_pending_age_s": null,
   "uptime_s": 184302
 }
 ```
@@ -199,7 +202,7 @@ Each entry exposes a `reprint_url` pointing to `POST /jobs/{id}/reprint`. By def
 - **Active jobs and 24h idempotency records** are excluded from ring-buffer eviction. Eviction only applies to terminal jobs older than their idempotency TTL.
 - Both caps are tunable via service config.
 
-Disk-wear rule: acceptance writes the JSON job record and rendered PNG once, terminal status writes once, and retry ticks are coalesced in memory with periodic summary flushes rather than rewriting the job file every 5 minutes.
+Disk-wear rule: acceptance writes the JSON job record and rendered PNG once, and terminal status writes once. Retry events are append-only JSONL records; log pruning drops oldest terminal-job history while preserving pending work.
 
 ### `POST /test`
 
@@ -209,7 +212,7 @@ Prints a fixed "hello, hardware works" page including a sample of each block typ
 
 The service runs a single FIFO worker draining a durable on-disk FIFO job log through an in-process wakeup queue. The printer is a single physical resource; concurrent `POST /print` requests are accepted in parallel by the HTTP layer only after they reserve queue capacity, render successfully, and persist the job. Jobs print in persisted arrival order. There is no coalescing — N separate POSTs produce N separate print jobs, each with its own `/jobs` entry and its own `auto_cut`. Composing a multi-section single print is the sender's job, via `cut` blocks within one document (§8).
 
-Admission order is: payload-size guard, schema/PNG validation, queue-cap reservation, render under the single render semaphore, durable write, then `202`. Failures before the durable write return `400`, `413`, or `503 queue_full` and do not create a job. This keeps bursty HTTP load from spawning unbounded concurrent PIL renders on the Pi Zero 2 W.
+Admission order is: payload-size guard, idempotency conflict/duplicate check, schema/PNG validation, queue-cap reservation, render under the single render semaphore, durable write, then `202`. Failures before the durable write return `400`, `409`, `413`, or `503 queue_full` and do not create a job. This keeps bursty HTTP load from spawning unbounded concurrent PIL renders on the Pi Zero 2 W, and duplicate idempotent retries avoid paying render cost.
 
 **Two senses of "batching":**
 
@@ -423,9 +426,10 @@ What gets printed, when, and from which sources is **explicitly out of scope for
 - Tailscale (already installed)
 
 **Fonts (bundled with the service, not system-installed):**
-- **Cozette** (BDF/PCF, 13px body; exact regular/bold/italic strategy pinned in Phase 3) — body text
+- **JetBrains Mono** (TTF, Regular + Bold) — body text, code blocks, and monospace value alignment
 - **IBM Plex Sans** (TTF, Medium + Bold) — display
-- **JetBrains Mono** (TTF, Regular + Bold) — code blocks and monospace value alignment
+- **Noto Sans SC** (OTF, Regular + Bold) — CJK fallback
+- **Spleen** (BDF, 8x16 + 5x8) — ASCII art grid fonts
 
 **Sender side:**
 - A shared "block builder" Python module for ergonomic JSON construction is a useful nice-to-have but lives in the sender's codebase, not this service's.
@@ -472,7 +476,7 @@ This spec ships in six phases. Sender integrations (OpenClaw briefing, agentic n
 
 **Phase 3 — Block schema & renderer (weekend 2)**
 - pydantic schema for Document + minimum block set (header, paragraph, checklist, rule, footer, qr, image, kv, section_title, spacer)
-- Cozette body + Plex Sans display + JetBrains Mono code wired in; exact Cozette emphasis strategy pinned; vector 2× → Atkinson dither helper landed
+- Body/display/code font stack wired in; vector 2× → Atkinson dither helper landed
 - 528 px live area + 24 px gutter constants enforced by every block renderer
 - `/print` endpoint, `/schema` endpoint with structured 400 contract (`valid_values`, `migration_hint`), `?force=json` reprint for JSON jobs
 - Pi Zero 2 W render benchmark for a default-cap 2m document and representative photo; set `max_rendered_height_px`, raw PNG byte cap, and render timeout from measured headroom
@@ -531,19 +535,18 @@ The HTTP API is the immovable contract. Everything else is a thin adapter. This 
 
 ## 14. Open questions
 
-The big architectural questions are resolved (see v0.3 decisions and v0.4 changes at the bottom of this doc). What remains is genuinely empirical — answers come from hardware in Phase 1 or from real usage:
+The big architectural questions are resolved (see v0.3 decisions and v0.4 changes at the bottom of this doc). What remains is genuinely empirical — answers come from hardware or from real usage:
 
-- **Actual DPI and printable width.** 180 vs 203 — won't know until calipers meet calibration page in Phase 1. Until measured, all mm-arithmetic assumes 180 DPI as a placeholder; the constant is in one place.
 - **Atkinson dither parameters for vector display fonts at 2× → 1-bit.** Off-the-shelf Atkinson is the starting point; threshold offset and serpentine-vs-non may need tuning per font size. Decide by printing display samples in Phase 3 and picking by eye.
 - **Auth model on tailnet.** Currently zero auth — anything on the tailnet can hit `/print`. Acceptable for a single-user device, but if the tailnet ever has guest devices a shared bearer token (`X-Print-Token`) is the obvious minimal addition. Defer until a real reason to reach for it appears.
 - **PNG cache + JSON ring-buffer caps.** 100MB / 7 days / 10k jobs are reasonable defaults for a Pi Zero 2 W's SD card; revisit once real usage patterns show whether briefings/photos/banners dominate the disk budget and whether SD-card write volume needs lower caps.
-- **Cozette emphasis and glyph coverage edge cases.** Exact bundled files and synthetic/fallback rules are pinned in Phase 3; non-Latin glyphs either render through a named bundled fallback or fail validation with a clear 400. Decide per-glyph during Phase 3 sample suite review.
+- **Decoded-image pixel cap.** `max_decoded_image_pixels` defaults to 10M pixels; revisit after real photo/banner usage on the target Pi.
 
 ## v0.3 decisions (resolved from v0.2 open questions)
 
 | Was open in v0.2 | Resolution in v0.3 |
 |---|---|
-| Font choice | Cozette 13px body + IBM Plex Sans Medium/Bold display + JetBrains Mono Regular/Bold for code; exact Cozette emphasis strategy pinned in Phase 3 (§4 Rendering pipeline, §10 Stack) |
+| Font choice | Current implementation uses JetBrains Mono Bold body, IBM Plex Sans Medium/Bold display, JetBrains Mono Regular/Bold code, Noto Sans SC fallback, and Spleen ASCII-art bitmap fonts (§4 Rendering pipeline, §10 Stack) |
 | Codepage fallback vs render-as-image | Always render as image. Pi owns typography end-to-end (§4 Rendering pipeline) |
 | Header `inverse_band` style + global body grid | 528 px live area inside 24 px gutters; band is margin-aligned. Edge-to-edge bleed reserved for explicit opt-in (§4 Rendering pipeline) |
 | Schema versioning aggressiveness | Single living schema, no version pin header, structured 400 with `valid_values` + `migration_hint`, `SCHEMA_CHANGELOG.md` (§5, §6 Schema evolution) |

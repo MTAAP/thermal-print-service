@@ -22,6 +22,8 @@ async def test_metrics_exposes_expected_counters(fake_deps):
         "printer_paper_mm_total",
         "printer_jobs_printed_total",
         "printer_jobs_failed_total",
+        "printer_jobs_retry_total",
+        "printer_oldest_pending_age_seconds",
         "printer_clock_synchronized",
     ):
         assert metric in text, f"missing metric {metric}"

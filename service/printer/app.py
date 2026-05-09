@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -28,8 +29,8 @@ from printer.queue.cache import PngCache
 from printer.queue.idempotency import IdempotencyCache, IdempotencyConflict
 from printer.queue.joblog import JobLog, JobRecord
 from printer.queue.worker import PrintWorker
-from printer.render.errors import RenderInputError
-from printer.render.renderer import render_document, render_document_chunks
+from printer.render.errors import RenderInputError, RenderResourceLimitError
+from printer.render.renderer import render_document_with_chunks
 from printer.render.typography import FontRegistry
 from printer.schema.blocks import block_type_names
 from printer.schema.document import Document
@@ -69,13 +70,43 @@ def _serialize_health(h):
         "clock_synchronized": h.clock_synchronized,
         "queue_depth": h.queue_depth,
         "last_print_at": h.last_print_at,
+        "last_error": h.last_error,
+        "oldest_pending_age_s": h.oldest_pending_age_s,
         "uptime_s": h.uptime_s,
     }
+
+
+def _accepted_record_for_job(deps: AppDeps, job_id: str) -> JobRecord | None:
+    found: JobRecord | None = None
+    for rec in deps.joblog.replay():
+        if rec.event == "accepted" and rec.job_id == job_id:
+            found = rec
+    return found
+
+
+def _duplicate_response(deps: AppDeps, hit) -> JSONResponse | None:
+    accepted = _accepted_record_for_job(deps, hit.job_id)
+    if accepted is None or accepted.estimated_paper_mm is None:
+        return None
+    return JSONResponse(status_code=202, content={
+        "id": hit.job_id,
+        "queued_at": hit.queued_at,
+        "estimated_paper_mm": accepted.estimated_paper_mm,
+        "renderer_version": accepted.renderer_version or RENDERER_VERSION,
+        "duplicate": True,
+    })
+
+
+def _png_content_type_ok(request: Request) -> bool:
+    content_type = request.headers.get("content-type", "")
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type == "image/png"
 
 
 def create_app(deps: AppDeps) -> FastAPI:
     cfg = deps.config
     fonts = FontRegistry(deps.config.font_dir)
+    render_semaphore = asyncio.Semaphore(1)
 
     def _render_or_400(json_body: bytes):
         try:
@@ -84,8 +115,13 @@ def create_app(deps: AppDeps) -> FastAPI:
             return None, JSONResponse(status_code=400,
                                       content={"errors": to_structured_errors(exc)})
         try:
-            img = render_document(doc, fonts=fonts)
-            chunks, trailing_cut = render_document_chunks(doc, fonts=fonts)
+            img, chunks, trailing_cut = render_document_with_chunks(
+                doc,
+                fonts=fonts,
+                max_decoded_image_pixels=deps.config.max_decoded_image_pixels,
+            )
+        except RenderResourceLimitError as exc:
+            return None, JSONResponse(status_code=413, content={"reason": exc.reason})
         except RenderInputError as exc:
             # Client-caused render failure (malformed PNG bytes inside an
             # ``image`` block, invalid characters for an EAN13 ``barcode``,
@@ -126,6 +162,10 @@ def create_app(deps: AppDeps) -> FastAPI:
             })
         return (doc, img, chunks, trailing_cut), None
 
+    async def _render_or_400_async(json_body: bytes):
+        async with render_semaphore:
+            return await asyncio.to_thread(_render_or_400, json_body)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await deps.worker.start()
@@ -148,8 +188,19 @@ def create_app(deps: AppDeps) -> FastAPI:
         if len(body) > cfg.max_request_bytes:
             return JSONResponse(status_code=413,
                                 content={"reason": "max_request_bytes"})
+        if not _png_content_type_ok(request):
+            return JSONResponse(status_code=400, content={
+                "errors": [{"block_index": None, "field": "Content-Type",
+                            "message": "must be image/png",
+                            "valid_values": ["image/png"], "migration_hint": None}]
+            })
         try:
             img = Image.open(io.BytesIO(body))
+            if img.width * img.height > cfg.max_decoded_image_pixels:
+                return JSONResponse(
+                    status_code=413,
+                    content={"reason": "max_decoded_image_pixels"},
+                )
             img.load()
         except Exception:
             return JSONResponse(status_code=400, content={
@@ -185,7 +236,23 @@ def create_app(deps: AppDeps) -> FastAPI:
         body = await request.body()
         if len(body) > deps.config.max_request_bytes:
             return JSONResponse(status_code=413, content={"reason": "max_request_bytes"})
-        res, err = _render_or_400(body)
+        sender = request.headers.get("x-sender")
+        idempotency_key = request.headers.get("x-idempotency-key")
+        payload_hash = _hash_payload(body)
+
+        if idempotency_key and not dry_run:
+            try:
+                hit = deps.idem.lookup(scope=sender, key=idempotency_key,
+                                       payload_hash=payload_hash)
+            except IdempotencyConflict:
+                return JSONResponse(status_code=409,
+                                    content={"reason": "idempotency_key_payload_mismatch"})
+            if hit is not None:
+                dup = _duplicate_response(deps, hit)
+                if dup is not None:
+                    return dup
+
+        res, err = await _render_or_400_async(body)
         if err is not None:
             return err
         doc, img, chunks, trailing_cut = res
@@ -202,24 +269,6 @@ def create_app(deps: AppDeps) -> FastAPI:
                 "X-Chunk-Count": str(len(chunks)),
                 "X-Renderer-Version": RENDERER_VERSION,
             })
-
-        sender = request.headers.get("x-sender")
-        idempotency_key = request.headers.get("x-idempotency-key")
-        payload_hash = _hash_payload(body)
-
-        if idempotency_key:
-            try:
-                hit = deps.idem.lookup(scope=sender, key=idempotency_key,
-                                       payload_hash=payload_hash)
-            except IdempotencyConflict:
-                return JSONResponse(status_code=409,
-                                    content={"reason": "idempotency_key_payload_mismatch"})
-            if hit is not None:
-                return JSONResponse(status_code=202, content={
-                    "id": hit.job_id, "queued_at": hit.queued_at,
-                    "estimated_paper_mm": estimated_mm,
-                    "renderer_version": RENDERER_VERSION, "duplicate": True,
-                })
 
         pending = deps.joblog.pending_after_replay()
         if len(pending) >= deps.config.max_queue_depth:
@@ -310,12 +359,16 @@ def create_app(deps: AppDeps) -> FastAPI:
         paper_total = 0
         print_total = 0
         fail_total = 0
+        retry_total = 0
         for r in deps.joblog.replay():
             if r.event == "printed" and r.paper_used_mm is not None:
                 paper_total += r.paper_used_mm
                 print_total += 1
             elif r.event in ("expired", "retry_timeout", "unknown_partial"):
                 fail_total += 1
+            elif r.event == "retry":
+                retry_total += 1
+        oldest_pending_age = h.oldest_pending_age_s or 0
         lines = [
             "# HELP printer_queue_depth Number of pending jobs.",
             "# TYPE printer_queue_depth gauge",
@@ -333,6 +386,12 @@ def create_app(deps: AppDeps) -> FastAPI:
             "(expired+retry_timeout+unknown_partial).",
             "# TYPE printer_jobs_failed_total counter",
             f"printer_jobs_failed_total {fail_total}",
+            "# HELP printer_jobs_retry_total Retry event count.",
+            "# TYPE printer_jobs_retry_total counter",
+            f"printer_jobs_retry_total {retry_total}",
+            "# HELP printer_oldest_pending_age_seconds Age of oldest pending job.",
+            "# TYPE printer_oldest_pending_age_seconds gauge",
+            f"printer_oldest_pending_age_seconds {oldest_pending_age}",
             "# HELP printer_clock_synchronized 1 if NTP sync is good.",
             "# TYPE printer_clock_synchronized gauge",
             f"printer_clock_synchronized {1 if h.clock_synchronized else 0}",
@@ -383,7 +442,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             shape_check = False
         if not shape_check:
             return JSONResponse(status_code=410, content={"reason": "no_renderable_json"})
-        res, err = _render_or_400(body)
+        res, err = await _render_or_400_async(body)
         if err is not None:
             return err
         doc, img, chunks, trailing_cut = res
@@ -435,7 +494,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             return JSONResponse(status_code=503, content={"reason": "queue_full"})
         sample_path = Path(deps.config.font_dir).parent / "test-pages" / "test-page.json"
         sample = sample_path.read_bytes()
-        res, err = _render_or_400(sample)
+        res, err = await _render_or_400_async(sample)
         if err is not None:
             return err
         doc, img, chunks, trailing_cut = res

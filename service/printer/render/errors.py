@@ -21,3 +21,12 @@ class RenderInputError(Exception):
         super().__init__(message)
         self.block_index = block_index
         self.field = field
+
+
+class RenderResourceLimitError(Exception):
+    """Renderer refused content because it would exceed a resource cap."""
+
+    def __init__(self, reason: str, *, block_index: int | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.block_index = block_index

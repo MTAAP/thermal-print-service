@@ -22,6 +22,7 @@ class ServiceConfig:
     max_request_bytes: int = 8 * 1024 * 1024
     max_rendered_height_px: int = 16_000
     max_raw_height_px: int = 16_000
+    max_decoded_image_pixels: int = 10_000_000
     idempotency_ttl_s: int = 24 * 3600
     png_cache_max_bytes: int = 100 * 1024 * 1024
     png_cache_ttl_s: int = 7 * 24 * 3600
@@ -45,6 +46,7 @@ class ServiceConfig:
             max_request_bytes=_env_int("PRINTER_MAX_REQUEST_BYTES", 8 * 1024 * 1024),
             max_rendered_height_px=_env_int("PRINTER_MAX_RENDERED_HEIGHT_PX", 16_000),
             max_raw_height_px=_env_int("PRINTER_MAX_RAW_HEIGHT_PX", 16_000),
+            max_decoded_image_pixels=_env_int("PRINTER_MAX_DECODED_IMAGE_PIXELS", 10_000_000),
             idempotency_ttl_s=_env_int("PRINTER_IDEMPOTENCY_TTL_S", 24 * 3600),
             png_cache_max_bytes=_env_int("PRINTER_PNG_CACHE_MAX_BYTES", 100 * 1024 * 1024),
             png_cache_ttl_s=_env_int("PRINTER_PNG_CACHE_TTL_S", 7 * 24 * 3600),

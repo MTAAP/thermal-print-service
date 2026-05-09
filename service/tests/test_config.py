@@ -19,6 +19,7 @@ def test_config_defaults_match_spec(monkeypatch, tmp_path):
     assert cfg.max_request_bytes == 8 * 1024 * 1024  # 8 MiB hard cap
     assert cfg.max_rendered_height_px == 16_000
     assert cfg.max_raw_height_px == 16_000
+    assert cfg.max_decoded_image_pixels == 10_000_000
     assert cfg.idempotency_ttl_s == 24 * 3600
     assert cfg.png_cache_max_bytes == 100 * 1024 * 1024
     assert cfg.png_cache_ttl_s == 7 * 24 * 3600

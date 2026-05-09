@@ -21,10 +21,9 @@ def test_minimal_briefing_renders(fonts):
     assert img.height > 200
 
 
-def test_unimplemented_block_type_falls_back_to_placeholder(fonts):
-    # large_text has no renderer in Phase 3 — placeholder substituted.
+def test_large_text_renders_non_empty_canvas(fonts):
     doc = Document.model_validate({"blocks": [
         {"type": "large_text", "text": "WELCOME"},
     ]})
     img = render_document(doc, fonts=fonts)
-    assert img.height > 0  # placeholder produces a non-zero canvas
+    assert img.height > 0

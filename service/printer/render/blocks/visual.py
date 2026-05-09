@@ -87,6 +87,7 @@ def render_gradient_band(block, ctx) -> Image.Image:
     h = 128
     base = Image.new("L", (LIVE_WIDTH_PX, h), 255)
     px = base.load()
+    assert px is not None
     for y in range(h):
         # ``down`` = darker at top, fading to white at bottom; ``up``
         # reverses. The grey value goes 0 (black) → 255 (white) along that
