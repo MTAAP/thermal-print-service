@@ -1,0 +1,47 @@
+[Unit]
+Description=Thermal Print Service
+After=network-online.target tailscaled.service systemd-timesyncd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thermalprinter
+Group=thermalprinter
+SupplementaryGroups=lp
+WorkingDirectory=/home/thermalprinter/thermal-print-service
+StateDirectory=printer
+StateDirectoryMode=0750
+Environment=PRINTER_STATE_DIR=/var/lib/printer
+Environment=PRINTER_FONT_DIR=/home/thermalprinter/thermal-print-service/assets/fonts
+Environment=PRINTER_DEVICE=/dev/usb/lp0
+Environment=PRINTER_HOST=127.0.0.1
+Environment=PRINTER_PORT=8000
+# Tunable caps (uncomment + set to override the spec §5 defaults):
+# Environment=PRINTER_MAX_QUEUE_DEPTH=100
+# Environment=PRINTER_MAX_REQUEST_BYTES=8388608
+# Environment=PRINTER_MAX_RENDERED_HEIGHT_PX=16000
+# Environment=PRINTER_MAX_RAW_HEIGHT_PX=16000
+# Environment=PRINTER_IDEMPOTENCY_TTL_S=86400
+# Environment=PRINTER_PNG_CACHE_MAX_BYTES=104857600
+# Environment=PRINTER_PNG_CACHE_TTL_S=604800
+# Environment=PRINTER_JSON_LOG_MAX_JOBS=10000
+# Environment=PRINTER_JSON_LOG_MAX_BYTES=104857600
+# Environment=PRINTER_RETRY_INTERVAL_S=300
+# Environment=PRINTER_MAX_RETRY_AGE_S=86400
+ExecStart=/home/thermalprinter/thermal-print-service/.venv/bin/printer-svc run
+Restart=on-failure
+RestartSec=3
+
+# Sandbox
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/printer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+DeviceAllow=/dev/usb/lp0 rw
+
+[Install]
+WantedBy=multi-user.target

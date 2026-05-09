@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+service/.venv/
+service/build/
+service/*.egg-info/
+mcp-server/*.egg-info/
+mcp-server/build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+service/tests/.golden-out/

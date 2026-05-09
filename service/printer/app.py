@@ -1,0 +1,564 @@
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
+from PIL import Image
+
+from printer import __version__ as RENDERER_VERSION
+from printer.config import ServiceConfig
+from printer.constants import (
+    MAX_LENGTH_MM_DEFAULT,
+    PRINT_HEAD_WIDTH_PX,
+    mm_to_px,
+    px_to_mm,
+)
+from printer.health import HealthCollector
+from printer.paths import StatePaths
+from printer.queue.cache import PngCache
+from printer.queue.idempotency import IdempotencyCache, IdempotencyConflict
+from printer.queue.joblog import JobLog, JobRecord
+from printer.queue.worker import PrintWorker
+from printer.render.errors import RenderInputError
+from printer.render.renderer import render_document, render_document_chunks
+from printer.render.typography import FontRegistry
+from printer.schema.blocks import block_type_names
+from printer.schema.document import Document
+from printer.schema.errors import to_structured_errors
+
+
+@dataclass
+class AppDeps:
+    config: ServiceConfig
+    paths: StatePaths
+    joblog: JobLog
+    idem: IdempotencyCache
+    png_cache: PngCache
+    worker: PrintWorker
+    transport: Any
+    health: HealthCollector
+    options_store: dict
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _new_job_id() -> str:
+    return uuid4().hex
+
+
+def _hash_payload(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
+
+def _serialize_health(h):
+    return {
+        "printer_connected": h.printer_connected,
+        "paper_present": h.paper_present,
+        "cover_closed": h.cover_closed,
+        "clock_synchronized": h.clock_synchronized,
+        "queue_depth": h.queue_depth,
+        "last_print_at": h.last_print_at,
+        "uptime_s": h.uptime_s,
+    }
+
+
+def create_app(deps: AppDeps) -> FastAPI:
+    cfg = deps.config
+    fonts = FontRegistry(deps.config.font_dir)
+
+    def _render_or_400(json_body: bytes):
+        try:
+            doc = Document.model_validate_json(json_body)
+        except Exception as exc:
+            return None, JSONResponse(status_code=400,
+                                      content={"errors": to_structured_errors(exc)})
+        try:
+            img = render_document(doc, fonts=fonts)
+            chunks, trailing_cut = render_document_chunks(doc, fonts=fonts)
+        except RenderInputError as exc:
+            # Client-caused render failure (malformed PNG bytes inside an
+            # ``image`` block, invalid characters for an EAN13 ``barcode``,
+            # etc.). Schema validation passed but the content is still bad —
+            # 400 with a structured error so the sender can fix the payload,
+            # not 500 which would imply a server fault and invite retries.
+            return None, JSONResponse(status_code=400, content={
+                "errors": [{
+                    "block_index": exc.block_index, "field": exc.field,
+                    "message": str(exc),
+                    "valid_values": None, "migration_hint": None,
+                }]
+            })
+        except Exception as exc:
+            return None, JSONResponse(status_code=500, content={
+                "errors": [{"block_index": None, "field": None,
+                            "message": f"render failure: {exc!r}",
+                            "valid_values": None, "migration_hint": None}]
+            })
+        if img.height > deps.config.max_rendered_height_px:
+            return None, JSONResponse(status_code=413,
+                                      content={"reason": "max_rendered_height_px"})
+        if doc.options.max_length_mm is not None and \
+           img.height > mm_to_px(doc.options.max_length_mm):
+            return None, JSONResponse(status_code=400, content={
+                "errors": [{"block_index": None, "field": "options.max_length_mm",
+                            "message": "rendered height exceeds max_length_mm",
+                            "valid_values": None, "migration_hint": None}]
+            })
+        if not chunks:
+            # Document validated but rendered to no printable content (e.g.
+            # only ``cut`` blocks). Reject — the printer would consume zero
+            # paper and the queue would carry a no-op job.
+            return None, JSONResponse(status_code=400, content={
+                "errors": [{"block_index": None, "field": "blocks",
+                            "message": "document has no printable content",
+                            "valid_values": None, "migration_hint": None}]
+            })
+        return (doc, img, chunks, trailing_cut), None
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await deps.worker.start()
+        try:
+            yield
+        finally:
+            await deps.worker.stop()
+
+    app = FastAPI(lifespan=lifespan, title="thermal-print-service",
+                  version=RENDERER_VERSION, docs_url=None, redoc_url=None,
+                  openapi_url=None)
+
+    @app.get("/healthz")
+    async def healthz():
+        return _serialize_health(deps.health.snapshot())
+
+    @app.post("/print/raw")
+    async def print_raw(request: Request, dry_run: bool = False):
+        body = await request.body()
+        if len(body) > cfg.max_request_bytes:
+            return JSONResponse(status_code=413,
+                                content={"reason": "max_request_bytes"})
+        try:
+            img = Image.open(io.BytesIO(body))
+            img.load()
+        except Exception:
+            return JSONResponse(status_code=400, content={
+                "errors": [{"block_index": None, "field": "body",
+                            "message": "malformed PNG",
+                            "valid_values": None, "migration_hint": None}]
+            })
+        if img.format != "PNG":
+            return JSONResponse(status_code=400, content={
+                "errors": [{"block_index": None, "field": "Content-Type",
+                            "message": "must decode as PNG",
+                            "valid_values": ["image/png"], "migration_hint": None}]
+            })
+        if img.width != PRINT_HEAD_WIDTH_PX:
+            return JSONResponse(status_code=400, content={
+                "errors": [{"block_index": None, "field": "width",
+                            "message": f"must be exactly {PRINT_HEAD_WIDTH_PX} px wide",
+                            "valid_values": None, "migration_hint": None}]
+            })
+        if img.height > cfg.max_raw_height_px:
+            return JSONResponse(status_code=413, content={"reason": "max_raw_height_px"})
+
+        if dry_run:
+            return Response(content=body, media_type="image/png", headers={
+                "X-Estimated-Paper-Mm": str(int(px_to_mm(img.height))),
+                "X-Renderer-Version": RENDERER_VERSION,
+            })
+
+        return await _ingest_raw(request, body, img, deps)
+
+    @app.post("/print")
+    async def print_document(request: Request, dry_run: bool = False):
+        body = await request.body()
+        if len(body) > deps.config.max_request_bytes:
+            return JSONResponse(status_code=413, content={"reason": "max_request_bytes"})
+        res, err = _render_or_400(body)
+        if err is not None:
+            return err
+        doc, img, chunks, trailing_cut = res
+        # Estimated paper is the sum of chunk heights — chunks omit ``cut``
+        # marker pixels because those don't actually print.
+        chunks_paper_px = sum(c.height for c in chunks)
+        estimated_mm = int(px_to_mm(chunks_paper_px))
+
+        if dry_run:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return Response(content=buf.getvalue(), media_type="image/png", headers={
+                "X-Estimated-Paper-Mm": str(estimated_mm),
+                "X-Chunk-Count": str(len(chunks)),
+                "X-Renderer-Version": RENDERER_VERSION,
+            })
+
+        sender = request.headers.get("x-sender")
+        idempotency_key = request.headers.get("x-idempotency-key")
+        payload_hash = _hash_payload(body)
+
+        if idempotency_key:
+            try:
+                hit = deps.idem.lookup(scope=sender, key=idempotency_key,
+                                       payload_hash=payload_hash)
+            except IdempotencyConflict:
+                return JSONResponse(status_code=409,
+                                    content={"reason": "idempotency_key_payload_mismatch"})
+            if hit is not None:
+                return JSONResponse(status_code=202, content={
+                    "id": hit.job_id, "queued_at": hit.queued_at,
+                    "estimated_paper_mm": estimated_mm,
+                    "renderer_version": RENDERER_VERSION, "duplicate": True,
+                })
+
+        pending = deps.joblog.pending_after_replay()
+        if len(pending) >= deps.config.max_queue_depth:
+            return JSONResponse(status_code=503, content={"reason": "queue_full"})
+
+        job_id = _new_job_id()
+        queued_at = _now_iso()
+
+        chunk_pngs: list[bytes] = []
+        for c in chunks:
+            buf = io.BytesIO()
+            c.save(buf, format="PNG")
+            chunk_pngs.append(buf.getvalue())
+
+        deps.png_cache.put_chunks(job_id, chunk_pngs)
+        deps.paths.job_json_path(job_id).write_bytes(body)
+        expires_at_iso = (
+            doc.options.expires_at.isoformat() if doc.options.expires_at else None
+        )
+        deps.options_store[job_id] = (
+            doc.options.auto_cut, doc.options.feed_lines_after, expires_at_iso,
+            trailing_cut,
+        )
+        deps.joblog.append(JobRecord.accepted(
+            job_id=job_id, sender=sender,
+            document_type=doc.document_type or "document",
+            idempotency_key=idempotency_key, payload_hash=payload_hash,
+            kind="document",
+            estimated_paper_mm=estimated_mm,
+            renderer_version=RENDERER_VERSION,
+            auto_cut=doc.options.auto_cut,
+            feed_lines_after=doc.options.feed_lines_after,
+            expires_at=expires_at_iso,
+            chunk_count=len(chunk_pngs),
+            trailing_cut=trailing_cut,
+        ))
+        if idempotency_key:
+            deps.idem.record(scope=sender, key=idempotency_key,
+                             payload_hash=payload_hash,
+                             job_id=job_id, queued_at=queued_at)
+        await deps.worker.enqueue(job_id)
+        return JSONResponse(status_code=202, content={
+            "id": job_id, "queued_at": queued_at,
+            "estimated_paper_mm": estimated_mm,
+            "renderer_version": RENDERER_VERSION, "duplicate": False,
+        })
+
+    @app.get("/schema")
+    async def schema():
+        return {
+            "blocks": Document.model_json_schema(by_alias=True),
+            "renderer_version": RENDERER_VERSION,
+            "block_types": block_type_names(),
+            "changelog_url": "https://github.com/MTAAP/thermal-print-service/blob/main/SCHEMA_CHANGELOG.md",
+        }
+
+    @app.get("/jobs")
+    async def jobs(limit: int = 20):
+        records = list(deps.joblog.replay())
+        accepted: dict[str, dict] = {}
+        terminal: dict[str, dict] = {}
+        for r in records:
+            if r.event == "accepted":
+                accepted[r.job_id] = r.__dict__
+            elif r.event in {"printed", "expired", "retry_timeout", "unknown_partial"}:
+                terminal[r.job_id] = r.__dict__
+        out = []
+        for jid, a in list(accepted.items())[-limit:]:
+            t = terminal.get(jid, {})
+            cached = deps.png_cache.get_chunks(jid) is not None
+            out.append({
+                "id": jid,
+                "sender": a.get("sender"),
+                "document_type": a.get("document_type"),
+                "queued_at": a.get("ts"),
+                "printed_at": t.get("ts") if t.get("event") == "printed" else None,
+                "status": t.get("event") or "queued",
+                "paper_used_mm": t.get("paper_used_mm"),
+                "renderer_version": a.get("renderer_version"),
+                "reprint_mode": "png_cached" if cached else "json_rerender",
+                "reprint_url": f"/jobs/{jid}/reprint",
+            })
+        return {"jobs": out}
+
+    @app.get("/metrics")
+    async def metrics():
+        h = deps.health.snapshot()
+        paper_total = 0
+        print_total = 0
+        fail_total = 0
+        for r in deps.joblog.replay():
+            if r.event == "printed" and r.paper_used_mm is not None:
+                paper_total += r.paper_used_mm
+                print_total += 1
+            elif r.event in ("expired", "retry_timeout", "unknown_partial"):
+                fail_total += 1
+        lines = [
+            "# HELP printer_queue_depth Number of pending jobs.",
+            "# TYPE printer_queue_depth gauge",
+            f"printer_queue_depth {h.queue_depth}",
+            "# HELP printer_uptime_seconds Process uptime in seconds.",
+            "# TYPE printer_uptime_seconds counter",
+            f"printer_uptime_seconds {h.uptime_s}",
+            "# HELP printer_paper_mm_total Total mm of paper consumed (printed jobs).",
+            "# TYPE printer_paper_mm_total counter",
+            f"printer_paper_mm_total {paper_total}",
+            "# HELP printer_jobs_printed_total Successful job count.",
+            "# TYPE printer_jobs_printed_total counter",
+            f"printer_jobs_printed_total {print_total}",
+            "# HELP printer_jobs_failed_total Failed job count "
+            "(expired+retry_timeout+unknown_partial).",
+            "# TYPE printer_jobs_failed_total counter",
+            f"printer_jobs_failed_total {fail_total}",
+            "# HELP printer_clock_synchronized 1 if NTP sync is good.",
+            "# TYPE printer_clock_synchronized gauge",
+            f"printer_clock_synchronized {1 if h.clock_synchronized else 0}",
+        ]
+        return Response(content="\n".join(lines) + "\n",
+                        media_type="text/plain; version=0.0.4")
+
+    @app.post("/jobs/{job_id}/reprint")
+    async def reprint(job_id: str, force: str | None = None):
+        # Reprints must respect ``max_queue_depth`` like ``/print`` and
+        # ``/print/raw``; otherwise repeated reprint calls bypass the cap.
+        pending = deps.joblog.pending_after_replay()
+        if len(pending) >= deps.config.max_queue_depth:
+            return JSONResponse(status_code=503, content={"reason": "queue_full"})
+        force_json = (force == "json")
+        if not force_json:
+            cached_chunks = deps.png_cache.get_chunks(job_id)
+            if cached_chunks is not None:
+                new_id = _new_job_id()
+                # Recompute estimated mm from the cached chunks so the
+                # response is honest about how much paper this reprint will
+                # consume — including the multi-chunk case from the original
+                # job.
+                total_h = 0
+                for png in cached_chunks:
+                    total_h += Image.open(io.BytesIO(png)).height
+                estimated_mm = int(px_to_mm(total_h))
+                await _commit_chunks(new_id, cached_chunks, sender=None,
+                                     idempotency_key=None,
+                                     document_type="reprint",
+                                     estimated_mm=estimated_mm, deps=deps)
+                return JSONResponse(status_code=202, content={
+                    "id": new_id, "queued_at": _now_iso(),
+                    "estimated_paper_mm": estimated_mm,
+                    "renderer_version": RENDERER_VERSION, "duplicate": False,
+                })
+        # Fall through to JSON re-render
+        json_path = deps.paths.job_json_path(job_id)
+        if not json_path.exists():
+            return JSONResponse(status_code=410, content={"reason": "job_artifacts_evicted"})
+        body = json_path.read_bytes()
+        # If the stored artifact is the Phase-2 raw-job sidecar shape (kind: raw),
+        # we cannot re-render via the document pipeline — fall back to 410 unless
+        # the cached PNG is still around.
+        try:
+            shape_check = body.lstrip().startswith(b"{") and b"\"blocks\"" in body
+        except Exception:
+            shape_check = False
+        if not shape_check:
+            return JSONResponse(status_code=410, content={"reason": "no_renderable_json"})
+        res, err = _render_or_400(body)
+        if err is not None:
+            return err
+        doc, img, chunks, trailing_cut = res
+        new_id = _new_job_id()
+        chunk_pngs: list[bytes] = []
+        for c in chunks:
+            buf = io.BytesIO()
+            c.save(buf, format="PNG")
+            chunk_pngs.append(buf.getvalue())
+        chunks_paper_px = sum(c.height for c in chunks)
+        estimated_mm = int(px_to_mm(chunks_paper_px))
+        deps.png_cache.put_chunks(new_id, chunk_pngs)
+        deps.paths.job_json_path(new_id).write_bytes(body)
+        expires_at_iso = (
+            doc.options.expires_at.isoformat() if doc.options.expires_at else None
+        )
+        deps.options_store[new_id] = (
+            doc.options.auto_cut, doc.options.feed_lines_after, expires_at_iso,
+            trailing_cut,
+        )
+        deps.joblog.append(JobRecord.accepted(
+            job_id=new_id, sender="reprint",
+            document_type=f"reprint:{job_id}",
+            idempotency_key=None, payload_hash=_hash_payload(body),
+            kind="document",
+            estimated_paper_mm=estimated_mm,
+            renderer_version=RENDERER_VERSION,
+            auto_cut=doc.options.auto_cut,
+            feed_lines_after=doc.options.feed_lines_after,
+            expires_at=expires_at_iso,
+            chunk_count=len(chunk_pngs),
+            trailing_cut=trailing_cut,
+        ))
+        await deps.worker.enqueue(new_id)
+        return JSONResponse(status_code=202, content={
+            "id": new_id, "queued_at": _now_iso(),
+            "estimated_paper_mm": estimated_mm,
+            "renderer_version": RENDERER_VERSION, "duplicate": False,
+        })
+
+    @app.post("/test")
+    async def post_test():
+        # ``/test`` enqueues a job and must respect ``max_queue_depth`` like
+        # ``/print``, ``/print/raw``, and ``/jobs/{id}/reprint`` — otherwise
+        # repeated /test calls bypass admission control and grow pending
+        # work past the cap configured for production traffic.
+        pending = deps.joblog.pending_after_replay()
+        if len(pending) >= deps.config.max_queue_depth:
+            return JSONResponse(status_code=503, content={"reason": "queue_full"})
+        sample_path = Path(deps.config.font_dir).parent / "test-pages" / "test-page.json"
+        sample = sample_path.read_bytes()
+        res, err = _render_or_400(sample)
+        if err is not None:
+            return err
+        doc, img, chunks, trailing_cut = res
+        new_id = _new_job_id()
+        chunk_pngs: list[bytes] = []
+        for c in chunks:
+            buf = io.BytesIO()
+            c.save(buf, format="PNG")
+            chunk_pngs.append(buf.getvalue())
+        chunks_paper_px = sum(c.height for c in chunks)
+        estimated_mm = int(px_to_mm(chunks_paper_px))
+        deps.png_cache.put_chunks(new_id, chunk_pngs)
+        deps.paths.job_json_path(new_id).write_bytes(sample)
+        deps.options_store[new_id] = (True, 2, None, trailing_cut)
+        deps.joblog.append(JobRecord.accepted(
+            job_id=new_id, sender="test-endpoint",
+            document_type=doc.document_type or "test",
+            idempotency_key=None, payload_hash=_hash_payload(sample),
+            kind="document",
+            estimated_paper_mm=estimated_mm,
+            renderer_version=RENDERER_VERSION,
+            auto_cut=True, feed_lines_after=2, expires_at=None,
+            chunk_count=len(chunk_pngs), trailing_cut=trailing_cut,
+        ))
+        await deps.worker.enqueue(new_id)
+        return {"id": new_id, "queued_at": _now_iso(),
+                "estimated_paper_mm": estimated_mm,
+                "renderer_version": RENDERER_VERSION, "duplicate": False}
+
+    return app
+
+
+async def _ingest_raw(request: Request, body: bytes, img: Image.Image,
+                      deps: AppDeps) -> Response:
+    sender = request.headers.get("x-sender")
+    idempotency_key = request.headers.get("x-idempotency-key")
+    payload_hash = _hash_payload(body)
+
+    if idempotency_key:
+        try:
+            hit = deps.idem.lookup(scope=sender, key=idempotency_key,
+                                   payload_hash=payload_hash)
+        except IdempotencyConflict:
+            return JSONResponse(status_code=409, content={
+                "reason": "idempotency_key_payload_mismatch"
+            })
+        if hit is not None:
+            return JSONResponse(status_code=202, content={
+                "id": hit.job_id, "queued_at": hit.queued_at,
+                "estimated_paper_mm": int(px_to_mm(img.height)),
+                "renderer_version": RENDERER_VERSION, "duplicate": True,
+            })
+
+    pending = deps.joblog.pending_after_replay()
+    if len(pending) >= deps.config.max_queue_depth:
+        return JSONResponse(status_code=503, content={"reason": "queue_full"})
+
+    job_id = _new_job_id()
+    queued_at = _now_iso()
+    await _commit_raw(job_id, body, sender=sender, idempotency_key=idempotency_key,
+                      document_type="raw", deps=deps)
+
+    if idempotency_key:
+        deps.idem.record(scope=sender, key=idempotency_key, payload_hash=payload_hash,
+                         job_id=job_id, queued_at=queued_at)
+
+    return JSONResponse(status_code=202, content={
+        "id": job_id, "queued_at": queued_at,
+        "estimated_paper_mm": int(px_to_mm(img.height)),
+        "renderer_version": RENDERER_VERSION, "duplicate": False,
+    })
+
+
+async def _commit_raw(job_id: str, png_bytes: bytes, *,
+                       sender: str | None, idempotency_key: str | None,
+                       document_type: str, deps: AppDeps) -> None:
+    img = Image.open(io.BytesIO(png_bytes))
+    estimated_mm = int(px_to_mm(img.height))
+
+    deps.png_cache.put_chunks(job_id, [png_bytes])
+    deps.paths.job_json_path(job_id).write_text(json.dumps({
+        "kind": "raw", "document_type": document_type, "sender": sender,
+        "options": {"auto_cut": True, "feed_lines_after": 2,
+                    "preserve_paper": False,
+                    "max_length_mm": MAX_LENGTH_MM_DEFAULT, "expires_at": None},
+    }))
+    deps.options_store[job_id] = (True, 2, None, False)
+    deps.joblog.append(JobRecord.accepted(
+        job_id=job_id, sender=sender, document_type=document_type,
+        idempotency_key=idempotency_key, payload_hash=_hash_payload(png_bytes),
+        kind="raw", estimated_paper_mm=estimated_mm,
+        renderer_version=RENDERER_VERSION,
+        auto_cut=True, feed_lines_after=2, expires_at=None,
+        chunk_count=1, trailing_cut=False,
+    ))
+    await deps.worker.enqueue(job_id)
+
+
+async def _commit_chunks(job_id: str, chunk_pngs: list[bytes], *,
+                         sender: str | None, idempotency_key: str | None,
+                         document_type: str, estimated_mm: int,
+                         deps: AppDeps) -> None:
+    """Commit a multi-chunk reprint job. Chunks come straight from the
+    cache of the original job; we don't re-derive ``trailing_cut`` because
+    the chunked layout already encodes the cut boundaries (each chunk gets
+    its own hardware cut), and the reprint inherits the spec-default
+    ``auto_cut=True`` so the final chunk also cuts.
+    """
+    deps.png_cache.put_chunks(job_id, chunk_pngs)
+    deps.paths.job_json_path(job_id).write_text(json.dumps({
+        "kind": "raw", "document_type": document_type, "sender": sender,
+        "options": {"auto_cut": True, "feed_lines_after": 2,
+                    "preserve_paper": False,
+                    "max_length_mm": MAX_LENGTH_MM_DEFAULT, "expires_at": None},
+    }))
+    deps.options_store[job_id] = (True, 2, None, False)
+    deps.joblog.append(JobRecord.accepted(
+        job_id=job_id, sender=sender, document_type=document_type,
+        idempotency_key=idempotency_key,
+        payload_hash=_hash_payload(b"".join(chunk_pngs)),
+        kind="raw", estimated_paper_mm=estimated_mm,
+        renderer_version=RENDERER_VERSION,
+        auto_cut=True, feed_lines_after=2, expires_at=None,
+        chunk_count=len(chunk_pngs), trailing_cut=False,
+    ))
+    await deps.worker.enqueue(job_id)
