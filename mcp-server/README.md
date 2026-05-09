@@ -53,20 +53,43 @@ set -euo pipefail
 # filters out every `mcp` version with "from versions: none" instead
 # of giving a clear Python-version error — so we resolve the right
 # interpreter explicitly here.
+#
+# Detection order:
+#   1. Explicit override: $PRINTER_PYTHON (escape hatch for unusual setups).
+#   2. Names on PATH: python3.13 → 3.12 → 3.11 → python3 (only if 3.11+).
+#   3. Well-known absolute paths: Homebrew (Apple Silicon + Intel), Linux
+#      package managers, common pyenv shim layouts. This handles agent
+#      runtimes (e.g. Claude Desktop, OpenClaw subprocesses) that inherit
+#      a sanitized PATH missing /opt/homebrew/bin.
+_python_ok() {
+  [ -x "$1" ] || command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null
+}
 PYTHON=""
-for cand in python3.13 python3.12 python3.11 python3; do
-  if command -v "$cand" >/dev/null 2>&1 \
-     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-    PYTHON="$cand"
-    break
-  fi
-done
+if [ -n "${PRINTER_PYTHON:-}" ] && _python_ok "$PRINTER_PYTHON"; then
+  PYTHON="$PRINTER_PYTHON"
+fi
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
-  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  for cand in python3.13 python3.12 python3.11 python3; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  for cand in \
+    /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 \
+    /usr/local/bin/python3.13   /usr/local/bin/python3.12   /usr/local/bin/python3.11 \
+    /usr/bin/python3.13         /usr/bin/python3.12         /usr/bin/python3.11; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
+  echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
+  echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  echo "       override: rerun with PRINTER_PYTHON=/path/to/python3.X prefixed" >&2
   exit 1
 fi
 
@@ -116,20 +139,43 @@ set -euo pipefail
 # filters out every `mcp` version with "from versions: none" instead
 # of giving a clear Python-version error — so we resolve the right
 # interpreter explicitly here.
+#
+# Detection order:
+#   1. Explicit override: $PRINTER_PYTHON (escape hatch for unusual setups).
+#   2. Names on PATH: python3.13 → 3.12 → 3.11 → python3 (only if 3.11+).
+#   3. Well-known absolute paths: Homebrew (Apple Silicon + Intel), Linux
+#      package managers, common pyenv shim layouts. This handles agent
+#      runtimes (e.g. Claude Desktop, OpenClaw subprocesses) that inherit
+#      a sanitized PATH missing /opt/homebrew/bin.
+_python_ok() {
+  [ -x "$1" ] || command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null
+}
 PYTHON=""
-for cand in python3.13 python3.12 python3.11 python3; do
-  if command -v "$cand" >/dev/null 2>&1 \
-     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-    PYTHON="$cand"
-    break
-  fi
-done
+if [ -n "${PRINTER_PYTHON:-}" ] && _python_ok "$PRINTER_PYTHON"; then
+  PYTHON="$PRINTER_PYTHON"
+fi
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
-  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  for cand in python3.13 python3.12 python3.11 python3; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  for cand in \
+    /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 \
+    /usr/local/bin/python3.13   /usr/local/bin/python3.12   /usr/local/bin/python3.11 \
+    /usr/bin/python3.13         /usr/bin/python3.12         /usr/bin/python3.11; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
+  echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
+  echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  echo "       override: rerun with PRINTER_PYTHON=/path/to/python3.X prefixed" >&2
   exit 1
 fi
 
@@ -198,20 +244,43 @@ set -euo pipefail
 # filters out every `mcp` version with "from versions: none" instead
 # of giving a clear Python-version error — so we resolve the right
 # interpreter explicitly here.
+#
+# Detection order:
+#   1. Explicit override: $PRINTER_PYTHON (escape hatch for unusual setups).
+#   2. Names on PATH: python3.13 → 3.12 → 3.11 → python3 (only if 3.11+).
+#   3. Well-known absolute paths: Homebrew (Apple Silicon + Intel), Linux
+#      package managers, common pyenv shim layouts. This handles agent
+#      runtimes (e.g. Claude Desktop, OpenClaw subprocesses) that inherit
+#      a sanitized PATH missing /opt/homebrew/bin.
+_python_ok() {
+  [ -x "$1" ] || command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null
+}
 PYTHON=""
-for cand in python3.13 python3.12 python3.11 python3; do
-  if command -v "$cand" >/dev/null 2>&1 \
-     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-    PYTHON="$cand"
-    break
-  fi
-done
+if [ -n "${PRINTER_PYTHON:-}" ] && _python_ok "$PRINTER_PYTHON"; then
+  PYTHON="$PRINTER_PYTHON"
+fi
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
-  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  for cand in python3.13 python3.12 python3.11 python3; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  for cand in \
+    /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 \
+    /usr/local/bin/python3.13   /usr/local/bin/python3.12   /usr/local/bin/python3.11 \
+    /usr/bin/python3.13         /usr/bin/python3.12         /usr/bin/python3.11; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
+  echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
+  echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  echo "       override: rerun with PRINTER_PYTHON=/path/to/python3.X prefixed" >&2
   exit 1
 fi
 
@@ -266,20 +335,43 @@ set -euo pipefail
 # filters out every `mcp` version with "from versions: none" instead
 # of giving a clear Python-version error — so we resolve the right
 # interpreter explicitly here.
+#
+# Detection order:
+#   1. Explicit override: $PRINTER_PYTHON (escape hatch for unusual setups).
+#   2. Names on PATH: python3.13 → 3.12 → 3.11 → python3 (only if 3.11+).
+#   3. Well-known absolute paths: Homebrew (Apple Silicon + Intel), Linux
+#      package managers, common pyenv shim layouts. This handles agent
+#      runtimes (e.g. Claude Desktop, OpenClaw subprocesses) that inherit
+#      a sanitized PATH missing /opt/homebrew/bin.
+_python_ok() {
+  [ -x "$1" ] || command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null
+}
 PYTHON=""
-for cand in python3.13 python3.12 python3.11 python3; do
-  if command -v "$cand" >/dev/null 2>&1 \
-     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-    PYTHON="$cand"
-    break
-  fi
-done
+if [ -n "${PRINTER_PYTHON:-}" ] && _python_ok "$PRINTER_PYTHON"; then
+  PYTHON="$PRINTER_PYTHON"
+fi
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
-  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  for cand in python3.13 python3.12 python3.11 python3; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  for cand in \
+    /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 \
+    /usr/local/bin/python3.13   /usr/local/bin/python3.12   /usr/local/bin/python3.11 \
+    /usr/bin/python3.13         /usr/bin/python3.12         /usr/bin/python3.11; do
+    if _python_ok "$cand"; then PYTHON="$cand"; break; fi
+  done
+fi
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
+  echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
+  echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  echo "       override: rerun with PRINTER_PYTHON=/path/to/python3.X prefixed" >&2
   exit 1
 fi
 
