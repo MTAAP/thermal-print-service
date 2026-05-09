@@ -6,15 +6,41 @@ from PIL import Image, ImageDraw
 
 from printer.constants import LIVE_WIDTH_PX
 from printer.render.blocks import register
-from printer.render.typography import apply_italic, apply_underline, supersample_render
+from printer.render.typography import (
+    apply_italic,
+    apply_underline,
+    contains_cjk,
+    render_body_text_mixed,
+    supersample_render,
+    supersample_render_mixed,
+)
+
+
+def _render_display_text(text: str, ctx, *, weight: str, size_px: int, max_width_px: int, **kwargs):
+    """Render display text with CJK fallback if needed."""
+    if contains_cjk(text) and ctx.fonts.has_cjk_font():
+        return supersample_render_mixed(
+            text=text,
+            latin_font=ctx.fonts.display(weight=weight, size_px=size_px),
+            cjk_font=ctx.fonts.cjk(bold=(weight == "bold"), size_px=size_px),
+            target_size_px=size_px,
+            max_width_px=max_width_px,
+            **kwargs,
+        )
+    return supersample_render(
+        text=text,
+        font=ctx.fonts.display(weight=weight, size_px=size_px),
+        target_size_px=size_px,
+        max_width_px=max_width_px,
+        **kwargs,
+    )
 
 
 @register("header")
 def render_header(block, ctx) -> Image.Image:
     target_h = 56
-    title = supersample_render(
-        text=block.text, font=ctx.fonts.display(weight="bold", size_px=28),
-        target_size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
+    title = _render_display_text(
+        block.text, ctx, weight="bold", size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
     )
     if block.style == "inverse_band":
         canvas = Image.new("1", (LIVE_WIDTH_PX, target_h), 0)  # black band
@@ -34,9 +60,8 @@ def render_header(block, ctx) -> Image.Image:
 @register("section_title")
 def render_section_title(block, ctx) -> Image.Image:
     target_h = 36
-    img = supersample_render(
-        text=block.text, font=ctx.fonts.display(weight="medium", size_px=22),
-        target_size_px=22, max_width_px=LIVE_WIDTH_PX,
+    img = _render_display_text(
+        block.text, ctx, weight="medium", size_px=22, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, target_h + 4), 1)
     x = 0 if block.align == "left" else \
@@ -53,31 +78,55 @@ def render_section_title(block, ctx) -> Image.Image:
 def render_paragraph(block, ctx) -> Image.Image:
     font = ctx.fonts.body()
     avg_glyph_px = 8  # Spleen 8x16 body, monospace
+    # For CJK, characters are typically twice as wide
+    has_cjk = contains_cjk(block.text)
+    cjk_chars_per_line = max(20, LIVE_WIDTH_PX // 16) if has_cjk else 0
     chars_per_line = max(20, LIVE_WIDTH_PX // avg_glyph_px)
-    wrapped = textwrap.wrap(block.text, width=chars_per_line) or [block.text]
+
+    # Use simpler wrapping for mixed text - estimate effective width
+    if has_cjk:
+        # Rough estimate: CJK chars are ~2x width of Latin
+        effective_width = cjk_chars_per_line
+    else:
+        effective_width = chars_per_line
+
+    wrapped = textwrap.wrap(block.text, width=effective_width) or [block.text]
     line_h = 18
     canvas = Image.new("1", (LIVE_WIDTH_PX, line_h * len(wrapped) + 4), 1)
-    d = ImageDraw.Draw(canvas)
+
+    use_cjk_render = has_cjk and ctx.fonts.has_cjk_font()
     y = 0
     for line in wrapped:
-        try:
-            bbox = font.getbbox(line)
-            line_w = bbox[2] - bbox[0]
-        except Exception:
-            line_w = len(line) * avg_glyph_px
-        x = 0 if block.align == "left" else \
-            (LIVE_WIDTH_PX - line_w) // 2 if block.align == "center" else \
-            (LIVE_WIDTH_PX - line_w)
-        d.text((x, y), line, fill=0, font=font)
+        if use_cjk_render:
+            line_img = render_body_text_mixed(
+                text=line,
+                body_font=font,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            line_w = line_img.width
+            x = 0 if block.align == "left" else \
+                (LIVE_WIDTH_PX - line_w) // 2 if block.align == "center" else \
+                max(0, LIVE_WIDTH_PX - line_w)
+            canvas.paste(line_img, (x, y))
+        else:
+            d = ImageDraw.Draw(canvas)
+            try:
+                bbox = font.getbbox(line)
+                line_w = bbox[2] - bbox[0]
+            except Exception:
+                line_w = len(line) * avg_glyph_px
+            x = 0 if block.align == "left" else \
+                (LIVE_WIDTH_PX - line_w) // 2 if block.align == "center" else \
+                (LIVE_WIDTH_PX - line_w)
+            d.text((x, y), line, fill=0, font=font)
         y += line_h
     return canvas
 
 
 @register("footer")
 def render_footer(block, ctx) -> Image.Image:
-    img = supersample_render(
-        text=block.text, font=ctx.fonts.display(weight="medium", size_px=14),
-        target_size_px=14, max_width_px=LIVE_WIDTH_PX,
+    img = _render_display_text(
+        block.text, ctx, weight="medium", size_px=14, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + 8), 1)
     canvas.paste(img, ((LIVE_WIDTH_PX - img.width) // 2, 4))
@@ -88,10 +137,8 @@ def render_footer(block, ctx) -> Image.Image:
 def render_large_text(block, ctx) -> Image.Image:
     sizes = {"xl": 48, "xxl": 80, "xxxl": 128}
     target = sizes[block.size]
-    img = supersample_render(
-        text=block.text,
-        font=ctx.fonts.display(weight="bold", size_px=target),
-        target_size_px=target, max_width_px=LIVE_WIDTH_PX,
+    img = _render_display_text(
+        block.text, ctx, weight="bold", size_px=target, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + 8), 1)
     if block.align == "left":
@@ -109,17 +156,13 @@ def render_pull_quote(block, ctx) -> Image.Image:
     bar_w = 4
     indent = 16
     text_w = LIVE_WIDTH_PX - bar_w - indent
-    quote_img = supersample_render(
-        text=block.text,
-        font=ctx.fonts.display(weight="medium", size_px=20),
-        target_size_px=20, max_width_px=text_w,
+    quote_img = _render_display_text(
+        block.text, ctx, weight="medium", size_px=20, max_width_px=text_w,
     )
     parts = [quote_img]
     if block.attribution:
-        attr_img = supersample_render(
-            text=f"— {block.attribution}",
-            font=ctx.fonts.display(weight="medium", size_px=12),
-            target_size_px=12, max_width_px=text_w,
+        attr_img = _render_display_text(
+            f"— {block.attribution}", ctx, weight="medium", size_px=12, max_width_px=text_w,
         )
         parts.append(attr_img)
     pad = 6
@@ -142,11 +185,9 @@ def render_drop_cap(block, ctx) -> Image.Image:
     # saturated, and the higher supersample carries richer luminance into
     # each output pixel.
     cap_size = 56
-    cap_img = supersample_render(
-        text=block.first_letter,
-        font=ctx.fonts.display(weight="bold", size_px=cap_size),
-        target_size_px=cap_size, max_width_px=cap_size + 8,
-        factor=4, dither="ordered",
+    cap_img = _render_display_text(
+        block.first_letter, ctx, weight="bold", size_px=cap_size,
+        max_width_px=cap_size + 8, factor=4, dither="ordered",
     )
     cap_w = cap_img.width
     cap_h = cap_img.height
@@ -186,13 +227,41 @@ def render_drop_cap(block, ctx) -> Image.Image:
     h = max(cap_h, len(lines) * line_h) + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     canvas.paste(cap_img, (0, 0))
-    d = ImageDraw.Draw(canvas)
+
+    use_cjk_render = contains_cjk(block.rest) and ctx.fonts.has_cjk_font()
     y = 0
     for line in lines:
         x = indent if (y < cap_h) else 0
-        d.text((x, y), line, fill=0, font=body_font)
+        if use_cjk_render:
+            line_img = render_body_text_mixed(
+                text=line,
+                body_font=body_font,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            canvas.paste(line_img, (x, y))
+        else:
+            d = ImageDraw.Draw(canvas)
+            d.text((x, y), line, fill=0, font=body_font)
         y += line_h
     return canvas
+
+
+def _render_code_text(text: str, ctx, *, size_px: int, max_width_px: int):
+    """Render code text with CJK fallback if needed."""
+    if contains_cjk(text) and ctx.fonts.has_cjk_font():
+        return supersample_render_mixed(
+            text=text,
+            latin_font=ctx.fonts.code(size_px=size_px),
+            cjk_font=ctx.fonts.cjk(size_px=size_px),
+            target_size_px=size_px,
+            max_width_px=max_width_px,
+        )
+    return supersample_render(
+        text=text,
+        font=ctx.fonts.code(size_px=size_px),
+        target_size_px=size_px,
+        max_width_px=max_width_px,
+    )
 
 
 @register("code")
@@ -205,11 +274,7 @@ def render_code(block, ctx) -> Image.Image:
     line_h = 18
     lines = block.text.split("\n")
     rendered = [
-        supersample_render(
-            text=line if line else " ",
-            font=ctx.fonts.code(size_px=target_px),
-            target_size_px=target_px, max_width_px=LIVE_WIDTH_PX,
-        )
+        _render_code_text(line if line else " ", ctx, size_px=target_px, max_width_px=LIVE_WIDTH_PX)
         for line in lines
     ]
     h = line_h * len(rendered) + 4
@@ -232,11 +297,8 @@ def render_rich_text(block, ctx) -> Image.Image:
     for run in block.runs:
         weight = "bold" if run.bold else "medium"
         size_target = {"sm": 12, "md": 18, "lg": 28}.get(run.size, 18)
-        frag = supersample_render(
-            text=run.text,
-            font=ctx.fonts.display(weight=weight, size_px=size_target),
-            target_size_px=size_target,
-            max_width_px=LIVE_WIDTH_PX,
+        frag = _render_display_text(
+            run.text, ctx, weight=weight, size_px=size_target, max_width_px=LIVE_WIDTH_PX,
         )
         # Order: italic shear first (synthetic-slant of glyph shapes) →
         # underline rule (axis-aligned, attached below the slanted glyphs) →

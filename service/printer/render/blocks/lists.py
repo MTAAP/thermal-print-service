@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 
 from printer.constants import LIVE_WIDTH_PX
 from printer.render.blocks import register
+from printer.render.typography import contains_cjk, render_body_text_mixed
 
 
 @register("checklist")
@@ -14,10 +15,24 @@ def render_checklist(block, ctx) -> Image.Image:
     h = line_h * len(block.items) + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
+
+    # Check if any items contain CJK
+    any_cjk = any(contains_cjk(item) for item in block.items)
+    use_cjk_render = any_cjk and ctx.fonts.has_cjk_font()
+
     for i, item in enumerate(block.items):
         y = i * line_h
         d.rectangle([2, y + 3, 2 + box_size, y + 3 + box_size], outline=0, width=1)
-        d.text((2 + box_size + 6, y), item, fill=0, font=font)
+        text_x = 2 + box_size + 6
+        if use_cjk_render and contains_cjk(item):
+            item_img = render_body_text_mixed(
+                text=item,
+                body_font=font,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            canvas.paste(item_img, (text_x, y))
+        else:
+            d.text((text_x, y), item, fill=0, font=font)
     return canvas
 
 
@@ -30,10 +45,33 @@ def render_kv(block, ctx) -> Image.Image:
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
     key_col_w = 180
+
+    # Check if any keys/values contain CJK
+    any_cjk = any(contains_cjk(p.key) or contains_cjk(p.value) for p in block.pairs)
+    use_cjk_render = any_cjk and ctx.fonts.has_cjk_font()
+
     for i, p in enumerate(block.pairs):
         y = i * line_h
-        d.text((0, y), p.key, fill=0, font=body)
-        d.text((key_col_w, y), p.value, fill=0, font=code)
+        if use_cjk_render and contains_cjk(p.key):
+            key_img = render_body_text_mixed(
+                text=p.key,
+                body_font=body,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            canvas.paste(key_img, (0, y))
+        else:
+            d.text((0, y), p.key, fill=0, font=body)
+
+        if use_cjk_render and contains_cjk(p.value):
+            val_img = render_body_text_mixed(
+                text=p.value,
+                body_font=code,
+                cjk_font=ctx.fonts.cjk(size_px=12),
+                body_height_px=12,
+            )
+            canvas.paste(val_img, (key_col_w, y))
+        else:
+            d.text((key_col_w, y), p.value, fill=0, font=code)
     return canvas
 
 
@@ -44,10 +82,24 @@ def render_bullets(block, ctx) -> Image.Image:
     h = line_h * len(block.items) + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
+
+    # Check if any items contain CJK
+    any_cjk = any(contains_cjk(item) for item in block.items)
+    use_cjk_render = any_cjk and ctx.fonts.has_cjk_font()
+
     for i, item in enumerate(block.items):
         y = i * line_h
         d.text((4, y), block.marker, fill=0, font=font)
-        d.text((4 + 18, y), item, fill=0, font=font)
+        text_x = 4 + 18
+        if use_cjk_render and contains_cjk(item):
+            item_img = render_body_text_mixed(
+                text=item,
+                body_font=font,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            canvas.paste(item_img, (text_x, y))
+        else:
+            d.text((text_x, y), item, fill=0, font=font)
     return canvas
 
 
@@ -66,6 +118,11 @@ def render_numbered(block, ctx) -> Image.Image:
     h = line_h * n + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
+
+    # Check if any items contain CJK
+    any_cjk = any(contains_cjk(item) for item in block.items)
+    use_cjk_render = any_cjk and ctx.fonts.has_cjk_font()
+
     for i, item in enumerate(block.items):
         y = i * line_h
         prefix = f"{i + 1}."
@@ -76,7 +133,15 @@ def render_numbered(block, ctx) -> Image.Image:
             pw = len(prefix) * 6
         # Right-align the prefix within prefix_col_w
         d.text((prefix_col_w - pw - 4, y), prefix, fill=0, font=font)
-        d.text((prefix_col_w, y), item, fill=0, font=font)
+        if use_cjk_render and contains_cjk(item):
+            item_img = render_body_text_mixed(
+                text=item,
+                body_font=font,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            canvas.paste(item_img, (prefix_col_w, y))
+        else:
+            d.text((prefix_col_w, y), item, fill=0, font=font)
     return canvas
 
 
@@ -88,6 +153,13 @@ def render_table_compact(block, ctx) -> Image.Image:
     cols = len(rows[0])
     headers = block.headers
 
+    # Check if any cells contain CJK
+    all_texts = [cell for row in rows for cell in row]
+    if headers:
+        all_texts.extend(headers)
+    any_cjk = any(contains_cjk(t) for t in all_texts)
+    use_cjk_render = any_cjk and ctx.fonts.has_cjk_font()
+
     # Compute column widths from longest cell per column.
     col_widths: list[int] = []
     for c in range(cols):
@@ -96,11 +168,17 @@ def render_table_compact(block, ctx) -> Image.Image:
             cell_texts = cell_texts + [headers[c]]
         widest = 0
         for t in cell_texts:
-            try:
-                bb = font.getbbox(t)
-                w = bb[2] - bb[0]
-            except Exception:
-                w = len(t) * 6
+            if use_cjk_render and contains_cjk(t):
+                # For CJK, estimate width using CJK character width
+                cjk_chars = sum(1 for ch in t if contains_cjk(ch))
+                latin_chars = len(t) - cjk_chars
+                w = cjk_chars * 16 + latin_chars * 8  # CJK ~16px, Latin ~8px
+            else:
+                try:
+                    bb = font.getbbox(t)
+                    w = bb[2] - bb[0]
+                except Exception:
+                    w = len(t) * 6
             if w > widest:
                 widest = w
         col_widths.append(widest + 12)  # 12 px gutter
@@ -117,11 +195,22 @@ def render_table_compact(block, ctx) -> Image.Image:
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
 
+    def draw_cell(text: str, x: int, y: int):
+        if use_cjk_render and contains_cjk(text):
+            cell_img = render_body_text_mixed(
+                text=text,
+                body_font=font,
+                cjk_font=ctx.fonts.cjk(size_px=16),
+            )
+            canvas.paste(cell_img, (x, y))
+        else:
+            d.text((x, y), text, fill=0, font=font)
+
     y = 0
     if headers is not None:
         x = 0
         for c in range(cols):
-            d.text((x, y), headers[c], fill=0, font=font)
+            draw_cell(headers[c], x, y)
             x += col_widths[c]
         y += line_h
         d.line([(0, y + 1), (LIVE_WIDTH_PX - 1, y + 1)], fill=0, width=1)
@@ -129,7 +218,7 @@ def render_table_compact(block, ctx) -> Image.Image:
     for r in rows:
         x = 0
         for c in range(cols):
-            d.text((x, y), r[c], fill=0, font=font)
+            draw_cell(r[c], x, y)
             x += col_widths[c]
         y += line_h
     return canvas
