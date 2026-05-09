@@ -41,6 +41,36 @@ and the migration hint surfaced in 400 responses.
   maps to `unknown_partial` per spec — the boundary is "did any byte hit
   the printer?" not "did anything go wrong?".
 
+## v0.7.2
+
+CJK fallback rendering (no public schema change).
+
+- **Body, display, and code text now fall back to Noto Sans SC Bold
+  for codepoints missing from their primary font.** A single per-codepoint
+  cmap-coverage check inside ``supersample_render`` segments the input
+  into runs by which font owns each codepoint, renders each run at the
+  supersample size, then composites baseline-aligned via
+  ``font.getmetrics()`` before the existing downsample + Atkinson-dither
+  pass. Pure-Latin text bypasses the composite path even when the
+  fallback is available, so the fast path stays fast.
+- **Atom-aware wrap.** ``wrap_body_text`` replaces ``textwrap.wrap`` in
+  paragraphs and list blocks. Atoms are Latin words (broken at
+  whitespace), individual non-primary-cmap codepoints (so Chinese,
+  Japanese, Korean and other spaceless scripts wrap mid-run), and
+  whitespace runs. Atoms wider than the line cap (long URLs, file
+  paths, hashes) split at codepoint boundaries.
+- **drop_cap wrap rebuilt** on the same atom primitive with a per-line
+  width callback so the indented-then-full-width two-phase wrap composes
+  with mixed-script content.
+- **Body line height bumped 24 → 26 px** to fit the worst-case mixed
+  line height (Noto SC Bold's larger ascent at 18 px).
+- **New asset:** ``assets/fonts/noto-sans-sc/NotoSansSC-{Regular,Bold}.otf``
+  (SubsetOTF, ~8 MB each, OFL-1.1) plus LICENSE. Activates automatically
+  when present; absence falls back to the v0.7.1 behavior (.notdef
+  glyphs for non-Latin codepoints).
+- **New runtime dep:** ``fonttools>=4.50`` for one-time cmap inspection
+  per font path. Cached as ``frozenset[int]`` via ``functools.lru_cache``.
+
 ## v0.7.1
 
 Renderer follow-up to v0.7.0 (no public schema change).

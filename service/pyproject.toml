@@ -11,6 +11,7 @@ dependencies = [
   "Pillow>=11.0",
   "qrcode[pil]>=8.0",
   "python-barcode>=0.15",
+  "fonttools>=4.50",
 ]
 
 [project.optional-dependencies]

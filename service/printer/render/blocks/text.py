@@ -1,19 +1,26 @@
 from __future__ import annotations
 
-import textwrap
-
 from PIL import Image, ImageDraw
 
 from printer.constants import LIVE_WIDTH_PX
 from printer.render.blocks import register
 from printer.render.typography import (
-    BODY_GLYPH_PX,
     BODY_LINE_H,
     apply_italic,
     apply_underline,
+    iter_atoms,
     render_body_line,
     supersample_render,
+    wrap_body_text,
 )
+
+
+def _cjk_fallback(ctx, *, bold: bool):
+    """Noto Sans SC handle to pass as ``fallback_font``, or ``None`` when the
+    CJK font isn't bundled (so callers stay on the fast path)."""
+    if not ctx.fonts.has_cjk_font():
+        return None
+    return ctx.fonts.cjk(bold=bold)
 
 
 @register("header")
@@ -21,6 +28,7 @@ def render_header(block, ctx) -> Image.Image:
     target_h = 56
     title = supersample_render(
         text=block.text, font=ctx.fonts.display(weight="bold", size_px=28),
+        fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
     )
     if block.style == "inverse_band":
@@ -43,6 +51,7 @@ def render_section_title(block, ctx) -> Image.Image:
     target_h = 36
     img = supersample_render(
         text=block.text, font=ctx.fonts.display(weight="medium", size_px=22),
+        fallback_font=_cjk_fallback(ctx, bold=False),
         target_size_px=22, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, target_h + 4), 1)
@@ -58,8 +67,7 @@ def render_section_title(block, ctx) -> Image.Image:
 
 @register("paragraph")
 def render_paragraph(block, ctx) -> Image.Image:
-    chars_per_line = max(20, LIVE_WIDTH_PX // BODY_GLYPH_PX)
-    wrapped = textwrap.wrap(block.text, width=chars_per_line) or [block.text]
+    wrapped = wrap_body_text(block.text, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX)
     canvas = Image.new("1", (LIVE_WIDTH_PX, BODY_LINE_H * len(wrapped) + 4), 1)
     y = 0
     for line in wrapped:
@@ -79,6 +87,7 @@ def render_paragraph(block, ctx) -> Image.Image:
 def render_footer(block, ctx) -> Image.Image:
     img = supersample_render(
         text=block.text, font=ctx.fonts.display(weight="medium", size_px=14),
+        fallback_font=_cjk_fallback(ctx, bold=False),
         target_size_px=14, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + 8), 1)
@@ -93,6 +102,7 @@ def render_large_text(block, ctx) -> Image.Image:
     img = supersample_render(
         text=block.text,
         font=ctx.fonts.display(weight="bold", size_px=target),
+        fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=target, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + 8), 1)
@@ -114,6 +124,7 @@ def render_pull_quote(block, ctx) -> Image.Image:
     quote_img = supersample_render(
         text=block.text,
         font=ctx.fonts.display(weight="medium", size_px=20),
+        fallback_font=_cjk_fallback(ctx, bold=False),
         target_size_px=20, max_width_px=text_w,
     )
     parts = [quote_img]
@@ -121,6 +132,7 @@ def render_pull_quote(block, ctx) -> Image.Image:
         attr_img = supersample_render(
             text=f"— {block.attribution}",
             font=ctx.fonts.display(weight="medium", size_px=12),
+            fallback_font=_cjk_fallback(ctx, bold=False),
             target_size_px=12, max_width_px=text_w,
         )
         parts.append(attr_img)
@@ -147,40 +159,50 @@ def render_drop_cap(block, ctx) -> Image.Image:
     cap_img = supersample_render(
         text=block.first_letter,
         font=ctx.fonts.display(weight="bold", size_px=cap_size),
+        fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=cap_size, max_width_px=cap_size + 8,
         factor=4, dither="ordered",
     )
     cap_w = cap_img.width
     cap_h = cap_img.height
     indent = cap_w + 6
-    full_chars = max(20, LIVE_WIDTH_PX // BODY_GLYPH_PX)
-    indented_chars = max(20, (LIVE_WIDTH_PX - indent) // BODY_GLYPH_PX)
 
-    # Greedy two-phase wrap: first wrap with the indented width until we've
-    # covered cap_h, then continue wrapping at full width.
-    words = block.rest.split()
+    # Greedy two-phase wrap by per-line width: indented lines until we clear
+    # cap_h, then full width. Atom-aware so CJK/non-Latin runs break per
+    # codepoint and Latin words break at whitespace, with widths measured
+    # against the actual body fonts (JB Mono Bold + Noto SC fallback).
     lines: list[str] = []
-    current = ""
-    chars_per_line = indented_chars
+    current: list[str] = []
+    current_w = 0
+    has_text = False
+    line_index = 0
 
-    def push_line():
-        nonlocal current
-        if current:
-            lines.append(current)
-            current = ""
+    def max_w_for(idx: int) -> int:
+        return LIVE_WIDTH_PX - indent if idx * BODY_LINE_H < cap_h else LIVE_WIDTH_PX
 
-    used_h = 0
-    for w in words:
-        candidate = (current + " " + w).strip()
-        if len(candidate) <= chars_per_line:
-            current = candidate
+    for atom in iter_atoms(block.rest, fonts=ctx.fonts):
+        if atom.isspace():
+            if has_text:
+                current.append(atom)
+                current_w += ctx.fonts.body_atom_width(atom)
             continue
-        push_line()
-        used_h += BODY_LINE_H
-        if used_h >= cap_h:
-            chars_per_line = full_chars
-        current = w
-    push_line()
+        aw = ctx.fonts.body_atom_width(atom)
+        if has_text and current_w + aw > max_w_for(line_index):
+            line = "".join(current).rstrip()
+            if line:
+                lines.append(line)
+                line_index += 1
+            current = [atom]
+            current_w = aw
+            has_text = True
+        else:
+            current.append(atom)
+            current_w += aw
+            has_text = True
+    if current:
+        line = "".join(current).rstrip()
+        if line:
+            lines.append(line)
 
     h = max(cap_h, len(lines) * BODY_LINE_H) + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
@@ -205,10 +227,12 @@ def render_code(block, ctx) -> Image.Image:
     target_px = 14
     line_h = 18
     lines = block.text.split("\n")
+    cjk_fb = _cjk_fallback(ctx, bold=False)
     rendered = [
         supersample_render(
             text=line if line else " ",
             font=ctx.fonts.code(size_px=target_px),
+            fallback_font=cjk_fb,
             target_size_px=target_px, max_width_px=LIVE_WIDTH_PX,
         )
         for line in lines
@@ -236,6 +260,7 @@ def render_rich_text(block, ctx) -> Image.Image:
         frag = supersample_render(
             text=run.text,
             font=ctx.fonts.display(weight=weight, size_px=size_target),
+            fallback_font=_cjk_fallback(ctx, bold=run.bold),
             target_size_px=size_target,
             max_width_px=LIVE_WIDTH_PX,
         )

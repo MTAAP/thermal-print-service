@@ -8,6 +8,7 @@ These fonts are bundled with the print service so the renderer is self-contained
 | Spleen 5x8 | `spleen/spleen-5x8.bdf` + `spleen/LICENSE` | https://github.com/fcambus/spleen | BSD-2-Clause |
 | IBM Plex Sans Medium / Bold | `plex/IBMPlexSans-{Medium,Bold}.ttf` | https://github.com/IBM/plex | OFL-1.1 |
 | JetBrains Mono Regular / Bold | `jetbrains-mono/JetBrainsMono-{Regular,Bold}.ttf` | https://github.com/JetBrains/JetBrainsMono | OFL-1.1 |
+| Noto Sans SC Regular / Bold | `noto-sans-sc/NotoSansSC-{Regular,Bold}.otf` + `noto-sans-sc/LICENSE` | https://github.com/googlefonts/noto-cjk | OFL-1.1 |
 
 ## Upstream URLs Actually Used
 
@@ -19,6 +20,8 @@ These fonts are bundled with the print service so the renderer is self-contained
 | `plex/IBMPlexSans-Bold.ttf` | https://github.com/IBM/plex/raw/master/packages/plex-sans/fonts/complete/ttf/IBMPlexSans-Bold.ttf |
 | `jetbrains-mono/JetBrainsMono-Regular.ttf` | https://github.com/JetBrains/JetBrainsMono/raw/master/fonts/ttf/JetBrainsMono-Regular.ttf |
 | `jetbrains-mono/JetBrainsMono-Bold.ttf` | https://github.com/JetBrains/JetBrainsMono/raw/master/fonts/ttf/JetBrainsMono-Bold.ttf |
+| `noto-sans-sc/NotoSansSC-Regular.otf` | https://github.com/googlefonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf |
+| `noto-sans-sc/NotoSansSC-Bold.otf` | https://github.com/googlefonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-Bold.otf |
 
 Note: the IBM Plex Sans spec URLs pointed to `IBM-Plex-Sans/fonts/complete/ttf/` (404 — old repo layout).
 The correct path after the repo was reorganized into a monorepo is `packages/plex-sans/fonts/complete/ttf/`.
@@ -30,3 +33,4 @@ The correct path after the repo was reorganized into a monorepo is `packages/ple
 - **Display** (header, section_title, large_text, pull_quote, footer): IBM Plex Sans Medium/Bold, vector, rendered through `supersample_render` at 2× target size and Atkinson-dithered to 1-bit.
 - **Drop cap**: IBM Plex Sans Bold at 56 px through `supersample_render` with `factor=4, dither="ordered"` so large solid regions stay saturated where Atkinson would shed too much error.
 - **Code** (code blocks, kv values where monospace alignment matters): JetBrains Mono Regular/Bold, vector, supersampled 2×→Atkinson.
+- **CJK fallback** (Chinese/Japanese/Korean codepoints anywhere in body, display, or code text): Noto Sans SC Regular/Bold (SubsetOTF, Adobe/Google Source Han SC subset, ~8 MB each). Plugged into `supersample_render` as the primary font's fallback — codepoints not in the primary's cmap are rendered with Noto SC instead, baseline-aligned via `font.getmetrics()`. Activates automatically; pure-Latin text stays on the fast path.

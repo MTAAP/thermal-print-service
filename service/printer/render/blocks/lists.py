@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-import textwrap
-
 from PIL import Image, ImageDraw
 
 from printer.constants import LIVE_WIDTH_PX
 from printer.render.blocks import register
-from printer.render.typography import BODY_GLYPH_PX, BODY_LINE_H, render_body_line
+from printer.render.typography import (
+    BODY_GLYPH_PX,
+    BODY_LINE_H,
+    render_body_line,
+    wrap_body_text,
+)
 
 
-def _wrap_item(text: str, *, width_px: int) -> list[str]:
-    chars = max(8, width_px // BODY_GLYPH_PX)
-    return textwrap.wrap(text, width=chars) or [text]
+def _wrap_item(text: str, *, fonts, width_px: int) -> list[str]:
+    return wrap_body_text(text, fonts=fonts, max_width_px=width_px)
 
 
 @register("checklist")
@@ -19,7 +21,7 @@ def render_checklist(block, ctx) -> Image.Image:
     box_size = 16
     text_x = 2 + box_size + 8
     text_w = LIVE_WIDTH_PX - text_x
-    wrapped = [_wrap_item(item, width_px=text_w) for item in block.items]
+    wrapped = [_wrap_item(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
     total_lines = sum(len(lines) for lines in wrapped)
     h = BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
@@ -44,8 +46,8 @@ def render_kv(block, ctx) -> Image.Image:
     value_text_w = LIVE_WIDTH_PX - key_col_w
     pair_renders: list[tuple[list[str], list[str]]] = []
     for p in block.pairs:
-        key_lines = _wrap_item(p.key, width_px=key_text_w)
-        value_lines = _wrap_item(p.value, width_px=value_text_w)
+        key_lines = _wrap_item(p.key, fonts=ctx.fonts, width_px=key_text_w)
+        value_lines = _wrap_item(p.value, fonts=ctx.fonts, width_px=value_text_w)
         pair_renders.append((key_lines, value_lines))
     total_lines = sum(max(len(k), len(v)) for k, v in pair_renders)
     h = BODY_LINE_H * total_lines + 4
@@ -74,7 +76,7 @@ def render_bullets(block, ctx) -> Image.Image:
     marker_x = 4
     text_x = marker_x + 24
     text_w = LIVE_WIDTH_PX - text_x
-    wrapped = [_wrap_item(item, width_px=text_w) for item in block.items]
+    wrapped = [_wrap_item(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
     total_lines = sum(len(lines) for lines in wrapped)
     h = BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
@@ -97,7 +99,7 @@ def render_numbered(block, ctx) -> Image.Image:
     longest = f"{n}."
     prefix_col_w = len(longest) * BODY_GLYPH_PX + 12
     text_w = LIVE_WIDTH_PX - prefix_col_w
-    wrapped = [_wrap_item(item, width_px=text_w) for item in block.items]
+    wrapped = [_wrap_item(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
     total_lines = sum(len(lines) for lines in wrapped)
     h = BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
