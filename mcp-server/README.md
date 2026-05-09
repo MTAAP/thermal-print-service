@@ -48,9 +48,22 @@ Uses `claude mcp add` at user scope so the server is available in every project.
 set -euo pipefail
 
 # Clone (or update) and build the venv
+REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
-git clone https://github.com/MTAAP/thermal-print-service.git "$REPO_DIR" 2>/dev/null \
-  || git -C "$REPO_DIR" pull --ff-only
+
+# Idempotent clone-or-resync. Hard-resets to the remote tip when the
+# dir is already a clone of this repo — robust to upstream history
+# rewrites (squash merges, fresh-history releases) which would break
+# `pull --ff-only`. If the dir exists but is not a clone of this
+# repo, it is removed and re-cloned from scratch.
+if [ -d "$REPO_DIR/.git" ] \
+   && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  git -C "$REPO_DIR" fetch --quiet origin
+  git -C "$REPO_DIR" reset --hard --quiet origin/main
+else
+  rm -rf "$REPO_DIR"
+  git clone --quiet "$REPO_URL" "$REPO_DIR"
+fi
 cd "$REPO_DIR/mcp-server"
 python3 -m venv .venv
 .venv/bin/pip install --quiet .
@@ -75,9 +88,22 @@ Uses [`codex mcp add`](https://github.com/openai/codex/blob/main/codex-rs/cli/sr
 ```bash
 set -euo pipefail
 
+REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
-git clone https://github.com/MTAAP/thermal-print-service.git "$REPO_DIR" 2>/dev/null \
-  || git -C "$REPO_DIR" pull --ff-only
+
+# Idempotent clone-or-resync. Hard-resets to the remote tip when the
+# dir is already a clone of this repo — robust to upstream history
+# rewrites (squash merges, fresh-history releases) which would break
+# `pull --ff-only`. If the dir exists but is not a clone of this
+# repo, it is removed and re-cloned from scratch.
+if [ -d "$REPO_DIR/.git" ] \
+   && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  git -C "$REPO_DIR" fetch --quiet origin
+  git -C "$REPO_DIR" reset --hard --quiet origin/main
+else
+  rm -rf "$REPO_DIR"
+  git clone --quiet "$REPO_URL" "$REPO_DIR"
+fi
 cd "$REPO_DIR/mcp-server"
 python3 -m venv .venv
 .venv/bin/pip install --quiet .
@@ -121,9 +147,22 @@ OpenClaw stores outbound MCP server definitions under `mcp.servers` in its confi
 ```bash
 set -euo pipefail
 
+REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
-git clone https://github.com/MTAAP/thermal-print-service.git "$REPO_DIR" 2>/dev/null \
-  || git -C "$REPO_DIR" pull --ff-only
+
+# Idempotent clone-or-resync. Hard-resets to the remote tip when the
+# dir is already a clone of this repo — robust to upstream history
+# rewrites (squash merges, fresh-history releases) which would break
+# `pull --ff-only`. If the dir exists but is not a clone of this
+# repo, it is removed and re-cloned from scratch.
+if [ -d "$REPO_DIR/.git" ] \
+   && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  git -C "$REPO_DIR" fetch --quiet origin
+  git -C "$REPO_DIR" reset --hard --quiet origin/main
+else
+  rm -rf "$REPO_DIR"
+  git clone --quiet "$REPO_URL" "$REPO_DIR"
+fi
 cd "$REPO_DIR/mcp-server"
 python3 -m venv .venv
 .venv/bin/pip install --quiet .
@@ -153,9 +192,22 @@ Patches `~/Library/Application Support/Claude/claude_desktop_config.json` in pla
 ```bash
 set -euo pipefail
 
+REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
-git clone https://github.com/MTAAP/thermal-print-service.git "$REPO_DIR" 2>/dev/null \
-  || git -C "$REPO_DIR" pull --ff-only
+
+# Idempotent clone-or-resync. Hard-resets to the remote tip when the
+# dir is already a clone of this repo — robust to upstream history
+# rewrites (squash merges, fresh-history releases) which would break
+# `pull --ff-only`. If the dir exists but is not a clone of this
+# repo, it is removed and re-cloned from scratch.
+if [ -d "$REPO_DIR/.git" ] \
+   && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  git -C "$REPO_DIR" fetch --quiet origin
+  git -C "$REPO_DIR" reset --hard --quiet origin/main
+else
+  rm -rf "$REPO_DIR"
+  git clone --quiet "$REPO_URL" "$REPO_DIR"
+fi
 cd "$REPO_DIR/mcp-server"
 python3 -m venv .venv
 .venv/bin/pip install --quiet .
