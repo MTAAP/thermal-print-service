@@ -10,7 +10,7 @@ See [`SKILL.md`](./SKILL.md) for when and why an agent should reach for these to
 
 Paste one of the blocks below into your agent (Claude Code, Codex CLI, OpenClaw, Claude Desktop chat with shell access, etc.). Each block is **idempotent** — re-running just refreshes the install.
 
-> Prereqs: **Python 3.11+** on PATH (the install blocks try `python3.13`, `python3.12`, `python3.11`, then `python3` — at least one of those must be 3.11+; if pip says `Could not find a version that satisfies the requirement mcp>=1.2 ... from versions: none`, your runtime Python is too old) and `git`. Claude Desktop additionally needs `jq` (`brew install jq`). Codex CLI's TOML helper uses Python's stdlib, no extra packages. Adjust `REPO_DIR` if you've already cloned the repo somewhere else.
+> Prereqs: `git` and `curl`. The install blocks try a system Python 3.11+ first (in PATH or in standard Homebrew/Linux locations), and bootstrap one automatically via [uv](https://github.com/astral-sh/uv) from `astral.sh` if none is found — no sudo, no system changes, all under `~/.local/`. Claude Desktop additionally needs `jq` (`brew install jq`). Codex CLI's TOML helper uses Python's stdlib, no extra packages. Adjust `REPO_DIR` if you've already cloned the repo somewhere else.
 
 ### One-prompt install (paste this into any agent)
 
@@ -82,10 +82,27 @@ if [ -z "$PYTHON" ]; then
     if _python_ok "$cand"; then PYTHON="$cand"; break; fi
   done
 fi
-if [ -z "$PYTHON" ]; then
+# Final fallback: bootstrap a self-contained Python via uv (Astral's
+# Python package/version manager — downloads uv to ~/.local/bin/uv and
+# manages Python distributions under ~/.local/share/uv/python/, no
+# sudo or system changes). Lets the install succeed on hosts where no
+# Python 3.11+ is installed and the user does not want to install one
+# globally. Skipped silently if curl is unavailable.
+USE_UV=
+if [ -z "$PYTHON" ] && command -v curl >/dev/null 2>&1; then
+  if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
+    echo "No Python 3.11+ found locally — bootstrapping uv from astral.sh..." >&2
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v uv >/dev/null 2>&1; then USE_UV=1; fi
+fi
+
+if [ -z "$PYTHON" ] && [ -z "${USE_UV:-}" ]; then
   echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
   echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
   echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
+  echo "       tried uv bootstrap: requires curl + network reach to astral.sh" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
@@ -110,7 +127,11 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-"$PYTHON" -m venv .venv
+if [ -n "${USE_UV:-}" ]; then
+  uv venv --quiet --seed --python 3.13 .venv
+else
+  "$PYTHON" -m venv .venv
+fi
 .venv/bin/pip install --quiet .
 
 # Register with Claude Code (user scope = available in every project).
@@ -168,10 +189,27 @@ if [ -z "$PYTHON" ]; then
     if _python_ok "$cand"; then PYTHON="$cand"; break; fi
   done
 fi
-if [ -z "$PYTHON" ]; then
+# Final fallback: bootstrap a self-contained Python via uv (Astral's
+# Python package/version manager — downloads uv to ~/.local/bin/uv and
+# manages Python distributions under ~/.local/share/uv/python/, no
+# sudo or system changes). Lets the install succeed on hosts where no
+# Python 3.11+ is installed and the user does not want to install one
+# globally. Skipped silently if curl is unavailable.
+USE_UV=
+if [ -z "$PYTHON" ] && command -v curl >/dev/null 2>&1; then
+  if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
+    echo "No Python 3.11+ found locally — bootstrapping uv from astral.sh..." >&2
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v uv >/dev/null 2>&1; then USE_UV=1; fi
+fi
+
+if [ -z "$PYTHON" ] && [ -z "${USE_UV:-}" ]; then
   echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
   echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
   echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
+  echo "       tried uv bootstrap: requires curl + network reach to astral.sh" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
@@ -196,7 +234,11 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-"$PYTHON" -m venv .venv
+if [ -n "${USE_UV:-}" ]; then
+  uv venv --quiet --seed --python 3.13 .venv
+else
+  "$PYTHON" -m venv .venv
+fi
 .venv/bin/pip install --quiet .
 
 # Re-add idempotently.
@@ -273,10 +315,27 @@ if [ -z "$PYTHON" ]; then
     if _python_ok "$cand"; then PYTHON="$cand"; break; fi
   done
 fi
-if [ -z "$PYTHON" ]; then
+# Final fallback: bootstrap a self-contained Python via uv (Astral's
+# Python package/version manager — downloads uv to ~/.local/bin/uv and
+# manages Python distributions under ~/.local/share/uv/python/, no
+# sudo or system changes). Lets the install succeed on hosts where no
+# Python 3.11+ is installed and the user does not want to install one
+# globally. Skipped silently if curl is unavailable.
+USE_UV=
+if [ -z "$PYTHON" ] && command -v curl >/dev/null 2>&1; then
+  if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
+    echo "No Python 3.11+ found locally — bootstrapping uv from astral.sh..." >&2
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v uv >/dev/null 2>&1; then USE_UV=1; fi
+fi
+
+if [ -z "$PYTHON" ] && [ -z "${USE_UV:-}" ]; then
   echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
   echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
   echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
+  echo "       tried uv bootstrap: requires curl + network reach to astral.sh" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
@@ -301,7 +360,11 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-"$PYTHON" -m venv .venv
+if [ -n "${USE_UV:-}" ]; then
+  uv venv --quiet --seed --python 3.13 .venv
+else
+  "$PYTHON" -m venv .venv
+fi
 .venv/bin/pip install --quiet .
 MCP_BIN="$(pwd)/.venv/bin/printer-mcp"
 
@@ -364,10 +427,27 @@ if [ -z "$PYTHON" ]; then
     if _python_ok "$cand"; then PYTHON="$cand"; break; fi
   done
 fi
-if [ -z "$PYTHON" ]; then
+# Final fallback: bootstrap a self-contained Python via uv (Astral's
+# Python package/version manager — downloads uv to ~/.local/bin/uv and
+# manages Python distributions under ~/.local/share/uv/python/, no
+# sudo or system changes). Lets the install succeed on hosts where no
+# Python 3.11+ is installed and the user does not want to install one
+# globally. Skipped silently if curl is unavailable.
+USE_UV=
+if [ -z "$PYTHON" ] && command -v curl >/dev/null 2>&1; then
+  if ! command -v uv >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/uv" ]; then
+    echo "No Python 3.11+ found locally — bootstrapping uv from astral.sh..." >&2
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v uv >/dev/null 2>&1; then USE_UV=1; fi
+fi
+
+if [ -z "$PYTHON" ] && [ -z "${USE_UV:-}" ]; then
   echo "ERROR: thermal-printer-mcp needs Python 3.11+." >&2
   echo "       tried PATH names: python3.13 python3.12 python3.11 python3" >&2
   echo "       tried absolute paths: /opt/homebrew/bin, /usr/local/bin, /usr/bin" >&2
+  echo "       tried uv bootstrap: requires curl + network reach to astral.sh" >&2
   echo "       fix:   brew install python@3.13           (macOS)" >&2
   echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
   echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
@@ -392,7 +472,11 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-"$PYTHON" -m venv .venv
+if [ -n "${USE_UV:-}" ]; then
+  uv venv --quiet --seed --python 3.13 .venv
+else
+  "$PYTHON" -m venv .venv
+fi
 .venv/bin/pip install --quiet .
 MCP_BIN="$(pwd)/.venv/bin/printer-mcp"
 
