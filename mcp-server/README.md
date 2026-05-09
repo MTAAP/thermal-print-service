@@ -10,7 +10,7 @@ See [`SKILL.md`](./SKILL.md) for when and why an agent should reach for these to
 
 Paste one of the blocks below into your agent (Claude Code, Codex CLI, OpenClaw, Claude Desktop chat with shell access, etc.). Each block is **idempotent** — re-running just refreshes the install.
 
-> Prereqs: `python3` (3.11+), `git`. Claude Desktop additionally needs `jq` (`brew install jq`). Codex CLI's TOML helper uses Python's stdlib, no extra packages. Adjust `REPO_DIR` if you've already cloned the repo somewhere else.
+> Prereqs: **Python 3.11+** on PATH (the install blocks try `python3.13`, `python3.12`, `python3.11`, then `python3` — at least one of those must be 3.11+; if pip says `Could not find a version that satisfies the requirement mcp>=1.2 ... from versions: none`, your runtime Python is too old) and `git`. Claude Desktop additionally needs `jq` (`brew install jq`). Codex CLI's TOML helper uses Python's stdlib, no extra packages. Adjust `REPO_DIR` if you've already cloned the repo somewhere else.
 
 ### One-prompt install (paste this into any agent)
 
@@ -47,7 +47,29 @@ Uses `claude mcp add` at user scope so the server is available in every project.
 ```bash
 set -euo pipefail
 
-# Clone (or update) and build the venv
+# Pick a Python 3.11+ interpreter. `mcp` requires >=3.10 and our
+# pyproject requires >=3.11. On systems where bare `python3` is older
+# (e.g. macOS system Python 3.9 or older Linux defaults), pip silently
+# filters out every `mcp` version with "from versions: none" instead
+# of giving a clear Python-version error — so we resolve the right
+# interpreter explicitly here.
+PYTHON=""
+for cand in python3.13 python3.12 python3.11 python3; do
+  if command -v "$cand" >/dev/null 2>&1 \
+     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    PYTHON="$cand"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
+  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  echo "       fix:   brew install python@3.13           (macOS)" >&2
+  echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
+  echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  exit 1
+fi
+
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
@@ -65,7 +87,7 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-python3 -m venv .venv
+"$PYTHON" -m venv .venv
 .venv/bin/pip install --quiet .
 
 # Register with Claude Code (user scope = available in every project).
@@ -88,6 +110,29 @@ Uses [`codex mcp add`](https://github.com/openai/codex/blob/main/codex-rs/cli/sr
 ```bash
 set -euo pipefail
 
+# Pick a Python 3.11+ interpreter. `mcp` requires >=3.10 and our
+# pyproject requires >=3.11. On systems where bare `python3` is older
+# (e.g. macOS system Python 3.9 or older Linux defaults), pip silently
+# filters out every `mcp` version with "from versions: none" instead
+# of giving a clear Python-version error — so we resolve the right
+# interpreter explicitly here.
+PYTHON=""
+for cand in python3.13 python3.12 python3.11 python3; do
+  if command -v "$cand" >/dev/null 2>&1 \
+     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    PYTHON="$cand"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
+  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  echo "       fix:   brew install python@3.13           (macOS)" >&2
+  echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
+  echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  exit 1
+fi
+
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
@@ -105,7 +150,7 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-python3 -m venv .venv
+"$PYTHON" -m venv .venv
 .venv/bin/pip install --quiet .
 
 # Re-add idempotently.
@@ -147,6 +192,29 @@ OpenClaw stores outbound MCP server definitions under `mcp.servers` in its confi
 ```bash
 set -euo pipefail
 
+# Pick a Python 3.11+ interpreter. `mcp` requires >=3.10 and our
+# pyproject requires >=3.11. On systems where bare `python3` is older
+# (e.g. macOS system Python 3.9 or older Linux defaults), pip silently
+# filters out every `mcp` version with "from versions: none" instead
+# of giving a clear Python-version error — so we resolve the right
+# interpreter explicitly here.
+PYTHON=""
+for cand in python3.13 python3.12 python3.11 python3; do
+  if command -v "$cand" >/dev/null 2>&1 \
+     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    PYTHON="$cand"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
+  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  echo "       fix:   brew install python@3.13           (macOS)" >&2
+  echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
+  echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  exit 1
+fi
+
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
@@ -164,7 +232,7 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-python3 -m venv .venv
+"$PYTHON" -m venv .venv
 .venv/bin/pip install --quiet .
 MCP_BIN="$(pwd)/.venv/bin/printer-mcp"
 
@@ -192,6 +260,29 @@ Patches `~/Library/Application Support/Claude/claude_desktop_config.json` in pla
 ```bash
 set -euo pipefail
 
+# Pick a Python 3.11+ interpreter. `mcp` requires >=3.10 and our
+# pyproject requires >=3.11. On systems where bare `python3` is older
+# (e.g. macOS system Python 3.9 or older Linux defaults), pip silently
+# filters out every `mcp` version with "from versions: none" instead
+# of giving a clear Python-version error — so we resolve the right
+# interpreter explicitly here.
+PYTHON=""
+for cand in python3.13 python3.12 python3.11 python3; do
+  if command -v "$cand" >/dev/null 2>&1 \
+     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    PYTHON="$cand"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: thermal-printer-mcp needs Python 3.11+ on PATH." >&2
+  echo "       tried: python3.13 python3.12 python3.11 python3" >&2
+  echo "       fix:   brew install python@3.13           (macOS)" >&2
+  echo "              sudo apt install python3.13 python3.13-venv  (Debian/Ubuntu)" >&2
+  echo "              or use pyenv: https://github.com/pyenv/pyenv" >&2
+  exit 1
+fi
+
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
@@ -209,7 +300,7 @@ else
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
-python3 -m venv .venv
+"$PYTHON" -m venv .venv
 .venv/bin/pip install --quiet .
 MCP_BIN="$(pwd)/.venv/bin/printer-mcp"
 
