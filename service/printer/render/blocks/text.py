@@ -39,7 +39,7 @@ def render_header(block, ctx) -> Image.Image:
     # cap-line was pinned regardless of descender, biasing the baseline
     # toward the bottom.
     band_h = 56
-    bottom_pad = 10
+    bottom_pad = 12
     header_font = ctx.fonts.display(weight="bold", size_px=28)
     title = supersample_render(
         text=block.text, font=header_font,
@@ -77,7 +77,7 @@ def render_section_title(block, ctx) -> Image.Image:
     # divider doesn't sit flush against the rule. Body-content blocks
     # (paragraph, lists) intentionally start at y=0 to stack tightly within
     # reading flow — that means the *divider* needs to own the gap.
-    bottom_pad = 14
+    bottom_pad = 17
     title_font = ctx.fonts.display(weight="medium", size_px=22)
     img = supersample_render(
         text=block.text, font=title_font,
@@ -142,10 +142,17 @@ def render_footer(block, ctx) -> Image.Image:
         for line in lines
     ]
     line_step = max((img.height for img in line_imgs), default=size_px) + 2
-    total_h = line_step * len(line_imgs) + 8
+    # Asymmetric padding: 8 px top, 4 px bottom. Footers typically follow
+    # a rule block (which only leaves ~2 px below its line) and the
+    # combined gap above the first footer line needs to feel like a
+    # deliberate closing space. Bottom stays tight so consecutive footers
+    # don't drift apart.
+    top_pad = 8
+    bottom_pad = 4
+    total_h = line_step * len(line_imgs) + top_pad + bottom_pad
     canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
     for i, img in enumerate(line_imgs):
-        canvas.paste(img, ((LIVE_WIDTH_PX - img.width) // 2, 4 + i * line_step))
+        canvas.paste(img, ((LIVE_WIDTH_PX - img.width) // 2, top_pad + i * line_step))
     return canvas
 
 
