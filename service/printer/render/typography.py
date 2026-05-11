@@ -137,15 +137,12 @@ class FontRegistry:
         return int(font.getbbox(atom)[2])
 
 
-def iter_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
-    """Yield wrap-atoms: Latin words, individual non-Latin chars, and
-    whitespace runs.
-
-    Latin words break only at whitespace. Codepoints outside the body
-    font's cmap (CJK and other non-Latin scripts) break per character so
-    spaceless scripts can wrap mid-run.
+def _iter_atoms(text: str, *, primary_keys: frozenset[int]) -> Iterator[str]:
+    """Atom-split a string using ``primary_keys`` (a font cmap) to decide
+    which codepoints are "Latin-like" (break only at whitespace) vs.
+    fallback-bound (break per character — CJK and other non-Latin scripts).
+    Whitespace runs are yielded as their own atoms.
     """
-    primary_keys = _font_cmap_keys(str(fonts.body().path))
     word: list[str] = []
     space: list[str] = []
     for ch in text:
@@ -173,26 +170,54 @@ def iter_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
         yield "".join(space)
 
 
-def wrap_body_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list[str]:
-    """Wrap text into lines that fit within ``max_width_px`` when rendered
-    through ``render_body_line``.
+def iter_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
+    """Body-grid atom iterator. See ``_iter_atoms`` for semantics."""
+    yield from _iter_atoms(
+        text, primary_keys=_font_cmap_keys(str(fonts.body().path)),
+    )
 
-    Latin words are atomic; CJK and other non-Latin codepoints break per
-    character so long Chinese/Japanese runs (which have no inter-word
-    whitespace) wrap correctly. Whitespace at line breaks is dropped.
+
+def wrap_text(
+    text: str,
+    *,
+    primary_font: ImageFont.FreeTypeFont,
+    fallback_font: ImageFont.FreeTypeFont | None,
+    max_width_px: int,
+) -> list[str]:
+    """Wrap text into lines that fit ``max_width_px`` when rendered through
+    ``supersample_render`` with the same primary/fallback fonts.
+
+    Latin words (codepoints covered by ``primary_font``'s cmap) are atomic
+    and break only at whitespace. Codepoints outside primary's cmap break
+    per character so spaceless scripts wrap mid-run; atoms wider than the
+    line are sliced at codepoint boundaries (long URLs, hashes).
+
+    ``fallback_font`` is consulted only for atom width — runs are still
+    composited inside ``supersample_render``. Pass ``None`` when there is
+    no fallback (small set of receipt content).
     """
+    primary_keys = _font_cmap_keys(str(primary_font.path))
+
+    def font_for(atom: str) -> ImageFont.FreeTypeFont:
+        if fallback_font is None or all(ord(c) in primary_keys for c in atom):
+            return primary_font
+        return fallback_font
+
+    def atom_width(atom: str) -> int:
+        return int(font_for(atom).getbbox(atom)[2])
+
     lines: list[str] = []
     current: list[str] = []
     current_w = 0
     has_text = False  # whether the current line contains any non-whitespace
 
     def fits(atom: str) -> bool:
-        return current_w + fonts.body_atom_width(atom) <= max_width_px
+        return current_w + atom_width(atom) <= max_width_px
 
     def push_atom(atom: str) -> None:
         nonlocal current, current_w, has_text
         current.append(atom)
-        current_w += fonts.body_atom_width(atom)
+        current_w += atom_width(atom)
         has_text = True
 
     def break_line() -> None:
@@ -204,7 +229,7 @@ def wrap_body_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list
         current_w = 0
         has_text = False
 
-    for atom in iter_atoms(text, fonts=fonts):
+    for atom in _iter_atoms(text, primary_keys=primary_keys):
         if atom.isspace():
             if has_text:
                 push_atom(atom)
@@ -214,11 +239,11 @@ def wrap_body_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list
         # An atom may itself exceed the line width (long URL, file path,
         # hash). Slice it into chunks that fit, breaking at codepoint
         # boundaries; the chunks land on consecutive lines.
-        if fonts.body_atom_width(atom) > max_width_px:
+        if atom_width(atom) > max_width_px:
             chunk_chars: list[str] = []
             for ch in atom:
                 trial = "".join(chunk_chars) + ch
-                if fonts.body_atom_width(trial) > max_width_px and chunk_chars:
+                if atom_width(trial) > max_width_px and chunk_chars:
                     push_atom("".join(chunk_chars))
                     break_line()
                     chunk_chars = [ch]
@@ -235,6 +260,17 @@ def wrap_body_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list
             lines.append(line)
 
     return lines or [text]
+
+
+def wrap_body_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list[str]:
+    """Body-grid wrap: JetBrains Mono Bold 18 with Noto Sans SC fallback."""
+    fallback = fonts.cjk(bold=True) if fonts.has_cjk_font() else None
+    return wrap_text(
+        text,
+        primary_font=fonts.body(),
+        fallback_font=fallback,
+        max_width_px=max_width_px,
+    )
 
 
 def _render_single_font(

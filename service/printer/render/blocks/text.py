@@ -12,6 +12,7 @@ from printer.render.typography import (
     render_body_line,
     supersample_render,
     wrap_body_text,
+    wrap_text,
 )
 
 
@@ -48,20 +49,29 @@ def render_header(block, ctx) -> Image.Image:
 
 @register("section_title")
 def render_section_title(block, ctx) -> Image.Image:
+    # Pre-v0.8 the canvas was ``target_h + 4`` with the text pasted at
+    # ``y=0``, so the cap-line crashed into whatever block sat above (often
+    # a ``rule``) and ~20 px of slack hung between the text baseline and
+    # the underline. Pad the top, vertically center the text inside the
+    # band, and drop the rule at the bottom — symmetric breathing room.
     target_h = 36
+    top_pad = 4
     img = supersample_render(
         text=block.text, font=ctx.fonts.display(weight="medium", size_px=22),
         fallback_font=_cjk_fallback(ctx, bold=False),
         target_size_px=22, max_width_px=LIVE_WIDTH_PX,
     )
-    canvas = Image.new("1", (LIVE_WIDTH_PX, target_h + 4), 1)
+    canvas_h = top_pad + target_h + 4
+    canvas = Image.new("1", (LIVE_WIDTH_PX, canvas_h), 1)
     x = 0 if block.align == "left" else \
         (LIVE_WIDTH_PX - img.width) // 2 if block.align == "center" else \
         (LIVE_WIDTH_PX - img.width)
-    canvas.paste(img, (x, 0))
+    y_text = top_pad + max(0, (target_h - img.height) // 2)
+    canvas.paste(img, (x, y_text))
     if block.style == "underline":
         d = ImageDraw.Draw(canvas)
-        d.line([(0, target_h + 1), (LIVE_WIDTH_PX - 1, target_h + 1)], fill=0, width=2)
+        rule_y = top_pad + target_h + 1
+        d.line([(0, rule_y), (LIVE_WIDTH_PX - 1, rule_y)], fill=0, width=2)
     return canvas
 
 
@@ -85,13 +95,32 @@ def render_paragraph(block, ctx) -> Image.Image:
 
 @register("footer")
 def render_footer(block, ctx) -> Image.Image:
-    img = supersample_render(
-        text=block.text, font=ctx.fonts.display(weight="medium", size_px=14),
-        fallback_font=_cjk_fallback(ctx, bold=False),
-        target_size_px=14, max_width_px=LIVE_WIDTH_PX,
+    # Plex Sans Bold 16 reads cleanly on the thermal head — Medium 14 (the
+    # pre-v0.8 size) was visibly fragile and long footer text was being
+    # Lanczos-shrunk to fit width, making "Sources: ..." style runs nearly
+    # illegible. Wrapping at the Plex Bold 16 metric keeps each line at the
+    # target stroke instead of compressing the whole block.
+    size_px = 16
+    font = ctx.fonts.display(weight="bold", size_px=size_px)
+    fallback = _cjk_fallback(ctx, bold=True)
+    lines = wrap_text(
+        block.text,
+        primary_font=font,
+        fallback_font=fallback,
+        max_width_px=LIVE_WIDTH_PX,
     )
-    canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + 8), 1)
-    canvas.paste(img, ((LIVE_WIDTH_PX - img.width) // 2, 4))
+    line_imgs = [
+        supersample_render(
+            text=line, font=font, fallback_font=fallback,
+            target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+        )
+        for line in lines
+    ]
+    line_step = max((img.height for img in line_imgs), default=size_px) + 2
+    total_h = line_step * len(line_imgs) + 8
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    for i, img in enumerate(line_imgs):
+        canvas.paste(img, ((LIVE_WIDTH_PX - img.width) // 2, 4 + i * line_step))
     return canvas
 
 

@@ -20,6 +20,29 @@ def test_section_title_underline_renders(fonts):
     assert img.height > 0
 
 
+def test_section_title_has_top_padding(fonts):
+    """Section titles must own breathing room above the cap-line so a
+    preceding ``rule`` block doesn't visually crash into the title. The
+    pre-v0.8 renderer pasted at y=0 and a rule sitting flush above
+    looked like a single contiguous frame."""
+    doc = Document.model_validate({"blocks": [
+        {"type": "section_title", "text": "Agentic AI", "style": "underline"},
+    ]})
+    img = render_document(doc, fonts=fonts)
+    # Scan the first column-strip for the first black pixel — that's the
+    # top of the rendered glyph. It must be at least a few rows below
+    # the top of the canvas.
+    px = img.load()
+    first_ink_row = next(
+        (y for y in range(img.height) for x in range(img.width) if px[x, y] == 0),
+        img.height,
+    )
+    assert first_ink_row >= 3, (
+        f"section_title cap-line at row {first_ink_row}; expected >= 3 "
+        "(top padding regression)"
+    )
+
+
 def test_paragraph_wraps_long_text(fonts):
     long = "the quick brown fox jumps over the lazy dog " * 6
     doc = Document.model_validate({"blocks": [
@@ -37,6 +60,28 @@ def test_footer_centers(fonts):
     ]})
     img = render_document(doc, fonts=fonts)
     assert img.height > 0
+
+
+def test_footer_wraps_long_text_instead_of_shrinking(fonts):
+    """Long footers (e.g. ``Sources: ...`` runs) must wrap to additional
+    lines at the target Plex Bold 16 size, not auto-Lanczos-shrink to fit
+    one line — that's the regression we just fixed."""
+    short = Document.model_validate({"blocks": [
+        {"type": "footer", "text": "ok"}
+    ]})
+    long = Document.model_validate({"blocks": [
+        {"type": "footer", "text": (
+            "Sources: CNBC, PBS, Spaceflight Now, ScienceDaily, "
+            "Yahoo Finance, CNN, SD Times, The New Stack, "
+            "Releasebot, Professor Glitch."
+        )}
+    ]})
+    short_img = render_document(short, fonts=fonts)
+    long_img = render_document(long, fonts=fonts)
+    # A wrapped multi-line footer is meaningfully taller than a single-line
+    # footer. If long text were still being Lanczos-shrunk to one line, the
+    # two heights would be near-equal.
+    assert long_img.height > short_img.height * 1.5
 
 
 def test_large_text_xxxl_renders(fonts):

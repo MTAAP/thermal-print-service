@@ -7,6 +7,7 @@ from printer.render.typography import (
     render_body_line,
     supersample_render,
     wrap_body_text,
+    wrap_text,
 )
 from printer.schema.document import Document
 
@@ -54,6 +55,34 @@ def test_wrap_body_text_mixed_script(fonts):
     assert len(lines) >= 2
     for line in lines:
         assert fonts.body_atom_width(line) <= 400
+
+
+def test_wrap_text_generic_font_wraps_latin(fonts):
+    """``wrap_text`` should wrap with any TTF font, not just the body grid.
+    Footer rendering uses Plex Sans Bold 16, so the same logic must apply."""
+    primary = fonts.display(weight="bold", size_px=16)
+    fallback = fonts.cjk(bold=True) if fonts.has_cjk_font() else None
+    long_text = (
+        "Sources: CNBC, PBS, Spaceflight Now, ScienceDaily, "
+        "Yahoo Finance, CNN, SD Times, The New Stack, "
+        "Releasebot, Professor Glitch."
+    )
+    lines = wrap_text(
+        long_text, primary_font=primary, fallback_font=fallback,
+        max_width_px=576,
+    )
+    assert len(lines) >= 2
+    for line in lines:
+        # No line exceeds the live width when measured with the same font.
+        assert int(primary.getbbox(line)[2]) <= 576
+
+
+def test_wrap_text_short_text_stays_one_line(fonts):
+    primary = fonts.display(weight="bold", size_px=16)
+    lines = wrap_text(
+        "ok", primary_font=primary, fallback_font=None, max_width_px=576,
+    )
+    assert lines == ["ok"]
 
 
 def test_render_body_line_chinese_renders_ink(fonts):
