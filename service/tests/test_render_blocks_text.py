@@ -12,6 +12,76 @@ def test_header_renders_and_is_576_wide(fonts):
     assert img.height > 0
 
 
+def test_header_band_centers_descender_text_optically(fonts):
+    """``Hello`` (no descenders) and ``Happy`` (p,y descenders) both start
+    with a capital H so the cap-line of H must sit at the same row in
+    both. Pre-fix centering used the bbox-tight image height, which is
+    larger for descender-bearing text and pushed its cap-line up while
+    cap-only text sat lower — visually inconsistent inside the inverse
+    band. Centering on cap height instead anchors the cap-line regardless
+    of descender."""
+    no_desc = Document.model_validate({"blocks": [
+        {"type": "header", "text": "Hello", "style": "inverse_band"},
+    ]})
+    with_desc = Document.model_validate({"blocks": [
+        {"type": "header", "text": "Happy", "style": "inverse_band"},
+    ]})
+
+    def cap_line_row(img):
+        # ``H`` lives in the leftmost slice of the inverse band; the first
+        # row where a white pixel appears there is the H cap-line.
+        px = img.load()
+        return next(
+            (y for y in range(img.height)
+             for x in range(12, 60)
+             if px[x, y] == 1),
+            -1,
+        )
+
+    a = cap_line_row(render_document(no_desc, fonts=fonts))
+    b = cap_line_row(render_document(with_desc, fonts=fonts))
+    assert a >= 0 and b >= 0
+    assert abs(a - b) <= 2, (
+        f"H cap-line at row {a} (Hello) vs {b} (Happy) — descender "
+        "should not shift the cap-line"
+    )
+
+
+def test_section_title_has_bottom_padding_before_next_block(fonts):
+    """A paragraph immediately after a section_title must not sit flush
+    against the title's underline. The divider owns the trailing gap so
+    body-content blocks can keep their tight 0-px top stacking."""
+    doc = Document.model_validate({"blocks": [
+        {"type": "section_title", "text": "AGENDA", "style": "underline"},
+        {"type": "paragraph", "text": "First item."},
+    ]})
+    title_only = Document.model_validate({"blocks": [
+        {"type": "section_title", "text": "AGENDA", "style": "underline"},
+    ]})
+    img = render_document(doc, fonts=fonts)
+    title_img = render_document(title_only, fonts=fonts)
+    # The section_title canvas needs slack between its underline and the
+    # end of its own block so a following paragraph has visual room.
+    # Locate the underline as the bottom-most row that is overwhelmingly
+    # black (the rule spans most of the live width; PIL's line caps don't
+    # touch the canvas edges so we can't probe x=0 directly).
+    px = title_img.load()
+    underline_row = -1
+    for y in range(title_img.height - 1, -1, -1):
+        black = sum(1 for x in range(title_img.width) if px[x, y] == 0)
+        if black > title_img.width * 0.9:
+            underline_row = y
+            break
+    assert underline_row > 0, "section_title underline not found"
+    gap_below_rule = (title_img.height - 1) - underline_row
+    assert gap_below_rule >= 4, (
+        f"section_title has only {gap_below_rule} px below its underline; "
+        "paragraph that follows will crash into the divider"
+    )
+    # And the composed doc renders strictly taller than just the title.
+    assert img.height > title_img.height
+
+
 def test_header_inverse_band_has_white_bottom_margin(fonts):
     """The inverse band must leave a white gutter below itself so a
     following paragraph doesn't crash into the band's lower edge. Mode

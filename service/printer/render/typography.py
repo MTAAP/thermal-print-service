@@ -417,6 +417,30 @@ def supersample_render(
     return atkinson_dither(img1x)
 
 
+def cap_height_for(font: ImageFont.FreeTypeFont) -> int:
+    """Pixel height of ``H`` rendered with ``font`` — a precise cap height
+    for optical vertical centering, since ``font.getmetrics()`` returns
+    ascent (which includes leading) rather than the cap glyph height."""
+    bbox = font.getbbox("H")
+    return max(1, int(bbox[3] - bbox[1]))
+
+
+def optical_center_y(*, band_h: int, font: ImageFont.FreeTypeFont) -> int:
+    """Y position for pasting a ``supersample_render`` image inside a
+    ``band_h``-tall band so the text's cap-line / baseline midpoint lands
+    at the band's geometric center.
+
+    The naive ``(band_h - img.height) // 2`` is bbox-tight: for text with
+    descenders (``y``, ``p``) the bbox includes the descender depth, so
+    pure geometric centering pushes the cap-line below the band's optical
+    center. Centering on cap height instead keeps cap-only text and
+    descender-bearing text both optically balanced — the cap-line lands
+    at ``(band_h - cap_h) // 2`` and any descender simply hangs into the
+    bottom slack.
+    """
+    return max(0, (band_h - cap_height_for(font)) // 2)
+
+
 def render_body_line(text: str, *, fonts: FontRegistry, max_width_px: int) -> Image.Image:
     """Render a single line of body copy through the supersample + dither
     path. Empty input is rendered as a single space so callers always get a

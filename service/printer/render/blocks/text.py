@@ -9,6 +9,7 @@ from printer.render.typography import (
     apply_italic,
     apply_underline,
     iter_atoms,
+    optical_center_y,
     render_body_line,
     supersample_render,
     wrap_body_text,
@@ -33,11 +34,13 @@ def render_header(block, ctx) -> Image.Image:
     # against the band's lower border.
     band_h = 56
     bottom_pad = 6
+    header_font = ctx.fonts.display(weight="bold", size_px=28)
     title = supersample_render(
-        text=block.text, font=ctx.fonts.display(weight="bold", size_px=28),
+        text=block.text, font=header_font,
         fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
     )
+    y_title = optical_center_y(band_h=band_h, font=header_font)
     if block.style == "inverse_band":
         canvas = Image.new("1", (LIVE_WIDTH_PX, band_h + bottom_pad), 1)  # white pad
         ImageDraw.Draw(canvas).rectangle(
@@ -47,12 +50,12 @@ def render_header(block, ctx) -> Image.Image:
         inv = title.point(lambda v: 255 if v == 0 else 0).convert("1")
         x = (LIVE_WIDTH_PX - inv.width) // 2 if block.align == "center" else \
             (LIVE_WIDTH_PX - inv.width) if block.align == "right" else 12
-        canvas.paste(inv, (x, max(0, (band_h - inv.height) // 2)))
+        canvas.paste(inv, (x, y_title))
         return canvas
     canvas = Image.new("1", (LIVE_WIDTH_PX, band_h + bottom_pad), 1)
     x = (LIVE_WIDTH_PX - title.width) // 2 if block.align == "center" else \
         (LIVE_WIDTH_PX - title.width) if block.align == "right" else 0
-    canvas.paste(title, (x, max(0, (band_h - title.height) // 2)))
+    canvas.paste(title, (x, y_title))
     return canvas
 
 
@@ -65,17 +68,23 @@ def render_section_title(block, ctx) -> Image.Image:
     # band, and drop the rule at the bottom — symmetric breathing room.
     target_h = 36
     top_pad = 4
+    # Padding below the underline so a paragraph that follows the section
+    # divider doesn't sit flush against the rule. Body-content blocks
+    # (paragraph, lists) intentionally start at y=0 to stack tightly within
+    # reading flow — that means the *divider* needs to own the gap.
+    bottom_pad = 8
+    title_font = ctx.fonts.display(weight="medium", size_px=22)
     img = supersample_render(
-        text=block.text, font=ctx.fonts.display(weight="medium", size_px=22),
+        text=block.text, font=title_font,
         fallback_font=_cjk_fallback(ctx, bold=False),
         target_size_px=22, max_width_px=LIVE_WIDTH_PX,
     )
-    canvas_h = top_pad + target_h + 4
+    canvas_h = top_pad + target_h + bottom_pad
     canvas = Image.new("1", (LIVE_WIDTH_PX, canvas_h), 1)
     x = 0 if block.align == "left" else \
         (LIVE_WIDTH_PX - img.width) // 2 if block.align == "center" else \
         (LIVE_WIDTH_PX - img.width)
-    y_text = top_pad + max(0, (target_h - img.height) // 2)
+    y_text = top_pad + optical_center_y(band_h=target_h, font=title_font)
     canvas.paste(img, (x, y_text))
     if block.style == "underline":
         d = ImageDraw.Draw(canvas)
