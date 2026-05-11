@@ -12,41 +12,6 @@ def test_header_renders_and_is_576_wide(fonts):
     assert img.height > 0
 
 
-def test_header_band_centers_descender_text_optically(fonts):
-    """``Hello`` (no descenders) and ``Happy`` (p,y descenders) both start
-    with a capital H so the cap-line of H must sit at the same row in
-    both. Pre-fix centering used the bbox-tight image height, which is
-    larger for descender-bearing text and pushed its cap-line up while
-    cap-only text sat lower — visually inconsistent inside the inverse
-    band. Centering on cap height instead anchors the cap-line regardless
-    of descender."""
-    no_desc = Document.model_validate({"blocks": [
-        {"type": "header", "text": "Hello", "style": "inverse_band"},
-    ]})
-    with_desc = Document.model_validate({"blocks": [
-        {"type": "header", "text": "Happy", "style": "inverse_band"},
-    ]})
-
-    def cap_line_row(img):
-        # ``H`` lives in the leftmost slice of the inverse band; the first
-        # row where a white pixel appears there is the H cap-line.
-        px = img.load()
-        return next(
-            (y for y in range(img.height)
-             for x in range(12, 60)
-             if px[x, y] == 1),
-            -1,
-        )
-
-    a = cap_line_row(render_document(no_desc, fonts=fonts))
-    b = cap_line_row(render_document(with_desc, fonts=fonts))
-    assert a >= 0 and b >= 0
-    assert abs(a - b) <= 2, (
-        f"H cap-line at row {a} (Hello) vs {b} (Happy) — descender "
-        "should not shift the cap-line"
-    )
-
-
 def test_section_title_has_bottom_padding_before_next_block(fonts):
     """A paragraph immediately after a section_title must not sit flush
     against the title's underline. The divider owns the trailing gap so

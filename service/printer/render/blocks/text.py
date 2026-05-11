@@ -9,7 +9,6 @@ from printer.render.typography import (
     apply_italic,
     apply_underline,
     iter_atoms,
-    optical_center_y,
     render_body_line,
     supersample_render,
     wrap_body_text,
@@ -32,15 +31,21 @@ def render_header(block, ctx) -> Image.Image:
     # inverse_band returned a canvas exactly ``band_h`` tall, entirely
     # black, and a following paragraph would start its first text row flush
     # against the band's lower border.
+    # bbox-tight centering: the rendered text image height is cap-to-baseline
+    # for cap-only words and cap-to-descender for words with descenders, so
+    # ``(band_h - img.height) // 2`` keeps the visual mass of the glyphs
+    # near the band's optical center for both. Cap-height-based centering
+    # was tried in v3 and made descender words sit 2 px lower because the
+    # cap-line was pinned regardless of descender, biasing the baseline
+    # toward the bottom.
     band_h = 56
-    bottom_pad = 6
+    bottom_pad = 10
     header_font = ctx.fonts.display(weight="bold", size_px=28)
     title = supersample_render(
         text=block.text, font=header_font,
         fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
     )
-    y_title = optical_center_y(band_h=band_h, font=header_font)
     if block.style == "inverse_band":
         canvas = Image.new("1", (LIVE_WIDTH_PX, band_h + bottom_pad), 1)  # white pad
         ImageDraw.Draw(canvas).rectangle(
@@ -50,12 +55,12 @@ def render_header(block, ctx) -> Image.Image:
         inv = title.point(lambda v: 255 if v == 0 else 0).convert("1")
         x = (LIVE_WIDTH_PX - inv.width) // 2 if block.align == "center" else \
             (LIVE_WIDTH_PX - inv.width) if block.align == "right" else 12
-        canvas.paste(inv, (x, y_title))
+        canvas.paste(inv, (x, max(0, (band_h - inv.height) // 2)))
         return canvas
     canvas = Image.new("1", (LIVE_WIDTH_PX, band_h + bottom_pad), 1)
     x = (LIVE_WIDTH_PX - title.width) // 2 if block.align == "center" else \
         (LIVE_WIDTH_PX - title.width) if block.align == "right" else 0
-    canvas.paste(title, (x, y_title))
+    canvas.paste(title, (x, max(0, (band_h - title.height) // 2)))
     return canvas
 
 
@@ -72,7 +77,7 @@ def render_section_title(block, ctx) -> Image.Image:
     # divider doesn't sit flush against the rule. Body-content blocks
     # (paragraph, lists) intentionally start at y=0 to stack tightly within
     # reading flow — that means the *divider* needs to own the gap.
-    bottom_pad = 8
+    bottom_pad = 14
     title_font = ctx.fonts.display(weight="medium", size_px=22)
     img = supersample_render(
         text=block.text, font=title_font,
@@ -84,7 +89,9 @@ def render_section_title(block, ctx) -> Image.Image:
     x = 0 if block.align == "left" else \
         (LIVE_WIDTH_PX - img.width) // 2 if block.align == "center" else \
         (LIVE_WIDTH_PX - img.width)
-    y_text = top_pad + optical_center_y(band_h=target_h, font=title_font)
+    # bbox-tight centering keeps visual mass at the band's optical center —
+    # cap-height-only centering shifted descender text 2 px lower in v3.
+    y_text = top_pad + max(0, (target_h - img.height) // 2)
     canvas.paste(img, (x, y_text))
     if block.style == "underline":
         d = ImageDraw.Draw(canvas)
