@@ -26,24 +26,33 @@ def _cjk_fallback(ctx, *, bold: bool):
 
 @register("header")
 def render_header(block, ctx) -> Image.Image:
-    target_h = 56
+    # ``band_h`` is the visual band, ``bottom_pad`` is white margin below it
+    # so the next block doesn't crash into the band edge. Pre-v0.8 the
+    # inverse_band returned a canvas exactly ``band_h`` tall, entirely
+    # black, and a following paragraph would start its first text row flush
+    # against the band's lower border.
+    band_h = 56
+    bottom_pad = 6
     title = supersample_render(
         text=block.text, font=ctx.fonts.display(weight="bold", size_px=28),
         fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
     )
     if block.style == "inverse_band":
-        canvas = Image.new("1", (LIVE_WIDTH_PX, target_h), 0)  # black band
-        # Render title in white: invert title image then paste
+        canvas = Image.new("1", (LIVE_WIDTH_PX, band_h + bottom_pad), 1)  # white pad
+        ImageDraw.Draw(canvas).rectangle(
+            [0, 0, LIVE_WIDTH_PX - 1, band_h - 1], fill=0,
+        )
+        # Render title in white: invert title image then paste over the band.
         inv = title.point(lambda v: 255 if v == 0 else 0).convert("1")
         x = (LIVE_WIDTH_PX - inv.width) // 2 if block.align == "center" else \
             (LIVE_WIDTH_PX - inv.width) if block.align == "right" else 12
-        canvas.paste(inv, (x, max(0, (target_h - inv.height) // 2)))
+        canvas.paste(inv, (x, max(0, (band_h - inv.height) // 2)))
         return canvas
-    canvas = Image.new("1", (LIVE_WIDTH_PX, target_h), 1)
+    canvas = Image.new("1", (LIVE_WIDTH_PX, band_h + bottom_pad), 1)
     x = (LIVE_WIDTH_PX - title.width) // 2 if block.align == "center" else \
         (LIVE_WIDTH_PX - title.width) if block.align == "right" else 0
-    canvas.paste(title, (x, max(0, (target_h - title.height) // 2)))
+    canvas.paste(title, (x, max(0, (band_h - title.height) // 2)))
     return canvas
 
 

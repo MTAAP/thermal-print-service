@@ -12,6 +12,22 @@ def test_header_renders_and_is_576_wide(fonts):
     assert img.height > 0
 
 
+def test_header_inverse_band_has_white_bottom_margin(fonts):
+    """The inverse band must leave a white gutter below itself so a
+    following paragraph doesn't crash into the band's lower edge. Mode
+    ``1`` stores black=0, white=1; the very last row of the rendered
+    block should be entirely white."""
+    doc = Document.model_validate({"blocks": [
+        {"type": "header", "text": "Layout Smoke", "style": "inverse_band"},
+    ]})
+    img = render_document(doc, fonts=fonts)
+    px = img.load()
+    last_row = img.height - 1
+    assert all(px[x, last_row] == 1 for x in range(img.width)), (
+        "inverse_band bottom edge has black pixels — missing white margin"
+    )
+
+
 def test_section_title_underline_renders(fonts):
     doc = Document.model_validate({"blocks": [
         {"type": "section_title", "text": "TODAY", "style": "underline"},
