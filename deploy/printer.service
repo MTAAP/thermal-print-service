@@ -42,7 +42,12 @@ ReadWritePaths=/var/lib/printer
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-DeviceAllow=/dev/usb/lp0 rw
+# Class-based rule (matches major 180, the usblp driver) so the device
+# cgroup BPF policy survives printer power-cycles. A path-based rule like
+# ``/dev/usb/lp0`` is resolved at unit start and stops matching the new
+# device node when udev recreates it after a hotplug — the kernel then
+# returns EPERM on open even though file ACLs would allow it.
+DeviceAllow=char-usb rw
 
 [Install]
 WantedBy=multi-user.target
