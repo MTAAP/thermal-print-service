@@ -150,3 +150,31 @@ def test_colophon_wraps_long_text(fonts):
         _ctx(fonts),
     )
     assert long.height > short.height
+
+
+def test_address_has_tight_line_spacing(fonts):
+    from printer.render.typography import BODY_LINE_H
+    from printer.schema.blocks import AddressBlock
+    fn = renderer_for("address")
+    img = fn(
+        AddressBlock(
+            type="address",
+            lines=["Tim Kraus", "123 Main Street", "Anytown, CA 94000"],
+        ),
+        _ctx(fonts),
+    )
+    assert img.height < BODY_LINE_H * 3 + 16
+
+
+def test_address_left_aligned(fonts):
+    from printer.schema.blocks import AddressBlock
+    fn = renderer_for("address")
+    img = fn(
+        AddressBlock(type="address", lines=["x", "y"]),
+        _ctx(fonts),
+    )
+    px = img.load()
+    has_left_ink = any(
+        px[x, y] == 0 for x in range(20) for y in range(img.height)
+    )
+    assert has_left_ink

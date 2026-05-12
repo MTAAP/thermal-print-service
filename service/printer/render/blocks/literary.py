@@ -200,3 +200,33 @@ def render_colophon(block, ctx) -> Image.Image:
         canvas.paste(img, (x, y))
         y += line_step
     return canvas
+
+
+# ===== address =====
+
+
+ADDRESS_LINE_H = 22  # tighter than BODY_LINE_H (26) for letterhead feel
+
+
+@register("address")
+def render_address(block, ctx) -> Image.Image:
+    """Letterhead-style address. Plex Medium 16 (smaller than body so it
+    reads as supporting info), left-aligned, tight line spacing."""
+    size_px = 16
+    font = ctx.fonts.display(weight="medium", size_px=size_px)
+    fallback = cjk_fallback(ctx.fonts, bold=False)
+    line_imgs = [
+        supersample_render(
+            text=line, font=font, fallback_font=fallback,
+            target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+        ) for line in block.lines
+    ]
+    top_pad = 4
+    bottom_pad = 8
+    total_h = top_pad + ADDRESS_LINE_H * len(line_imgs) + bottom_pad
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    y = top_pad
+    for img in line_imgs:
+        canvas.paste(img, (0, y))
+        y += ADDRESS_LINE_H
+    return canvas
