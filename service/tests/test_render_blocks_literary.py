@@ -92,3 +92,26 @@ def test_salutation_has_breathing_room_below(fonts):
     fn = renderer_for("salutation")
     img = fn(SalutationBlock(type="salutation", text="Dear Sam,"), _ctx(fonts))
     assert img.height >= 30
+
+
+def test_signature_is_right_aligned(fonts):
+    from printer.schema.blocks import SignatureBlock
+    fn = renderer_for("signature")
+    img = fn(SignatureBlock(type="signature", name="Tim"), _ctx(fonts))
+    px = img.load()
+    leftmost_ink = next(
+        (x for x in range(img.width) for y in range(img.height) if px[x, y] == 0),
+        img.width,
+    )
+    assert leftmost_ink > 200
+
+
+def test_signature_with_closing_taller_than_name_only(fonts):
+    from printer.schema.blocks import SignatureBlock
+    fn = renderer_for("signature")
+    plain = fn(SignatureBlock(type="signature", name="Tim"), _ctx(fonts))
+    with_closing = fn(
+        SignatureBlock(type="signature", name="Tim", closing="Yours,"),
+        _ctx(fonts),
+    )
+    assert with_closing.height > plain.height

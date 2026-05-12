@@ -127,3 +127,40 @@ def render_salutation(block, ctx) -> Image.Image:
     canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
     canvas.paste(img, (0, top_pad))
     return canvas
+
+
+# ===== signature =====
+
+
+@register("signature")
+def render_signature(block, ctx) -> Image.Image:
+    """Right-aligned italic sign-off. Optional closing renders on its own
+    line above the name; both lines are independently right-aligned. Name
+    is prefixed with ``— `` (em-dash + space)."""
+    size_px = 18
+    font = ctx.fonts.display(weight="medium", size_px=size_px)
+    fallback = cjk_fallback(ctx.fonts, bold=False)
+    name_text = f"— {block.name}"
+    name_img = apply_italic(supersample_render(
+        text=name_text, font=font, fallback_font=fallback,
+        target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+    ))
+    closing_img = None
+    if block.closing:
+        closing_img = apply_italic(supersample_render(
+            text=block.closing, font=font, fallback_font=fallback,
+            target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+        ))
+    parts = [closing_img, name_img] if closing_img is not None else [name_img]
+    line_gap = 2
+    top_pad = 12
+    bottom_pad = 6
+    parts_h = sum(p.height for p in parts) + line_gap * (len(parts) - 1)
+    total_h = top_pad + parts_h + bottom_pad
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    y = top_pad
+    for p in parts:
+        x = LIVE_WIDTH_PX - p.width
+        canvas.paste(p, (x, y))
+        y += p.height + line_gap
+    return canvas
