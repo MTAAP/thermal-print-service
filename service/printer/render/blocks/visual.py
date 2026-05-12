@@ -36,37 +36,53 @@ def render_rule(block, ctx) -> Image.Image:
 
 @register("spacer")
 def render_spacer(block, ctx) -> Image.Image:
-    h = 14 * block.lines
-    return Image.new("1", (LIVE_WIDTH_PX, h), 1)
+    from printer.render.typography import BODY_LINE_H
+
+    return Image.new("1", (LIVE_WIDTH_PX, BODY_LINE_H * block.lines), 1)
 
 
 @register("ornament")
 def render_ornament(block, ctx) -> Image.Image:
-    # Single-line decorative band, ~24 px tall. Patterns are repeated tokens;
-    # we measure the token width once and tile to fit the live area exactly,
-    # so wide patterns like ``geometric`` never clip mid-glyph at the right
-    # edge regardless of font metrics.
-    h = 24
-    canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
-    d = ImageDraw.Draw(canvas)
+    """Decorative band, ~28 px tall. Each pattern uses Unicode dingbats or
+    block elements rendered through supersample_render at display weight, so
+    the ornaments survive the thermal head with the same stroke fidelity as
+    other display text. Tokens are tiled to fill the live width.
+    """
+    from printer.render.typography import supersample_render
+
     tokens = {
-        "stars": "* ",
-        "diamonds": "<> ",
-        "leaves": "~ * ",
-        "geometric": "[] /\\ ",
+        "stars": "★ ",
+        "diamonds": "◆ ",
+        "leaves": "❀ ",
+        "geometric": "▰▱ ",
+        "waves": "～",
+        "art_deco": "▰▱▰▱ ",
+        "minimal_dots": "·  ",
     }
     token = tokens[block.pattern]
-    font = ctx.fonts.body()
-    bbox = font.getbbox(token)
+    size_px = 22
+    font = ctx.fonts.display(weight="bold", size_px=size_px)
+    # The IBM Plex display face does not cover dingbats (★ ◆ ❀ ▰▱ ～ ·) —
+    # they all resolve to the same .notdef tofu glyph and the patterns
+    # collapse to identical renders. Noto Sans SC (the CJK fallback) covers
+    # the full set, so route through the same per-glyph fallback path used
+    # by render_body_line.
+    fallback = ctx.fonts.cjk(bold=True) if ctx.fonts.has_cjk_font() else None
+    # Measure token width via the fallback when available, so tiling counts
+    # reflect the glyph actually composited at render time.
+    measure_font = fallback if fallback is not None else font
+    bbox = measure_font.getbbox(token)
     token_w = max(1, bbox[2] - bbox[0])
     tile_count = max(1, LIVE_WIDTH_PX // token_w)
-    # Drop the trailing space on the final token so the rendered string
-    # bounding box reflects the inked glyphs only and centers cleanly.
     line = (token * tile_count).rstrip()
-    line_bbox = font.getbbox(line)
-    line_w = line_bbox[2] - line_bbox[0]
-    x = max(0, (LIVE_WIDTH_PX - line_w) // 2)
-    d.text((x, 4), line, fill=0, font=font)
+    img = supersample_render(
+        text=line, font=font, fallback_font=fallback,
+        target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+    )
+    h = img.height + 8
+    canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
+    x = max(0, (LIVE_WIDTH_PX - img.width) // 2)
+    canvas.paste(img, (x, 4))
     return canvas
 
 
@@ -103,39 +119,60 @@ def render_gradient_band(block, ctx) -> Image.Image:
 
 @register("progress_bar")
 def render_progress_bar(block, ctx) -> Image.Image:
+    from printer.render.typography import BODY_LINE_H, render_body_line
+
     bar_h = 16
-    label_h = 14
     pad = 4
-    h = bar_h + (label_h + pad if block.label else 0)
-    canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
-    d = ImageDraw.Draw(canvas)
-    bar_top = label_h + pad if block.label else 0
-    # Outer border
-    d.rectangle(
-        [0, bar_top, LIVE_WIDTH_PX - 1, bar_top + bar_h - 1],
-        outline=0,
-        width=1,
-    )
-    # Filled portion
-    filled_w = int((LIVE_WIDTH_PX - 4) * block.value)
-    if filled_w > 0:
-        d.rectangle([2, bar_top + 2, 2 + filled_w, bar_top + bar_h - 3], fill=0)
     if block.label:
         pct = int(round(block.value * 100))
-        text = f"{block.label}  {pct}%"
-        d.text((0, 0), text, fill=0, font=ctx.fonts.body())
+        label_img = render_body_line(
+            f"{block.label}  {pct}%", fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX,
+        )
+        # Reserve a full body line-height for the label so descenders don't
+        # reach the bar's top edge. Raw d.text() at the body font produced
+        # ~18 px of glyphs in a 14 px gap and crashed into the bar.
+        label_band = max(BODY_LINE_H, label_img.height) + pad
+    else:
+        label_img = None
+        label_band = 0
+    h = label_band + bar_h
+    canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
+    if label_img is not None:
+        canvas.paste(label_img, (0, 0))
+    d = ImageDraw.Draw(canvas)
+    # Outer border
+    d.rectangle(
+        [0, label_band, LIVE_WIDTH_PX - 1, label_band + bar_h - 1],
+        outline=0, width=1,
+    )
+    filled_w = int((LIVE_WIDTH_PX - 4) * block.value)
+    if filled_w > 0:
+        d.rectangle(
+            [2, label_band + 2, 2 + filled_w, label_band + bar_h - 3], fill=0,
+        )
     return canvas
 
 
 @register("sparkline")
 def render_sparkline(block, ctx) -> Image.Image:
+    from printer.render.typography import BODY_LINE_H, render_body_line
+
     bar_h = 32
-    label_h = 14
     pad = 2
-    h = bar_h + (label_h + pad if block.label else 0)
+    if block.label:
+        label_img = render_body_line(
+            block.label, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX,
+        )
+        label_band = max(BODY_LINE_H, label_img.height) + pad
+    else:
+        label_img = None
+        label_band = 0
+    h = label_band + bar_h
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
+    if label_img is not None:
+        canvas.paste(label_img, (0, 0))
     d = ImageDraw.Draw(canvas)
-    top = label_h + pad if block.label else 0
+    top = label_band
 
     vmin = min(block.values)
     vmax = max(block.values)
@@ -152,7 +189,4 @@ def render_sparkline(block, ctx) -> Image.Image:
         y0 = top + (bar_h - bar_height)
         y1 = top + bar_h
         d.rectangle([x, y0, x + actual_bar_w - 1, y1 - 1], fill=0)
-
-    if block.label:
-        d.text((0, 0), block.label, fill=0, font=ctx.fonts.body())
     return canvas

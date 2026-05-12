@@ -15,6 +15,8 @@ from printer.render.errors import RenderInputError, RenderResourceLimitError
 
 @register("qr")
 def render_qr(block, ctx) -> Image.Image:
+    from printer.render.typography import render_body_line
+
     sizes = {"sm": 192, "md": 320, "lg": 480}
     target = sizes.get(block.size, 320)
     qr = qrcode.QRCode(border=2, error_correction=qrcode.constants.ERROR_CORRECT_M)
@@ -22,13 +24,24 @@ def render_qr(block, ctx) -> Image.Image:
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white").convert("1")
     img = img.resize((target, target), Image.Resampling.NEAREST)
-    canvas = Image.new("1", (LIVE_WIDTH_PX, target + 4), 1)
+    caption_img = None
+    if block.caption:
+        caption_img = render_body_line(
+            block.caption, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX,
+        )
+    caption_band = (caption_img.height + 4) if caption_img is not None else 0
+    canvas = Image.new("1", (LIVE_WIDTH_PX, target + 4 + caption_band), 1)
     canvas.paste(img, ((LIVE_WIDTH_PX - target) // 2, 2))
+    if caption_img is not None:
+        cx = (LIVE_WIDTH_PX - caption_img.width) // 2
+        canvas.paste(caption_img, (cx, target + 4))
     return canvas
 
 
 @register("image")
 def render_image(block, ctx) -> Image.Image:
+    from printer.render.typography import render_body_line
+
     try:
         # Default mode (no ``validate=True``) tolerates embedded whitespace
         # and newlines, matching how most clients (curl heredocs, JSON
@@ -55,9 +68,21 @@ def render_image(block, ctx) -> Image.Image:
         scale = target_w / img.width
         img = img.resize((target_w, int(img.height * scale)), Image.Resampling.LANCZOS)
     img = DITHERS[block.dither](img)
+    caption_img = None
+    if block.caption:
+        caption_img = render_body_line(
+            block.caption, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX,
+        )
+    caption_band = (caption_img.height + 4) if caption_img is not None else 0
     if block.bleed:
-        return img
-    canvas = Image.new("1", (LIVE_WIDTH_PX, img.height), 1)
+        if caption_img is None:
+            return img
+        canvas = Image.new("1", (PRINT_HEAD_WIDTH_PX, img.height + caption_band), 1)
+        canvas.paste(img, (0, 0))
+        cx = (PRINT_HEAD_WIDTH_PX - caption_img.width) // 2
+        canvas.paste(caption_img, (cx, img.height + 4))
+        return canvas
+    canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + caption_band), 1)
     if block.align == "left":
         x = 0
     elif block.align == "right":
@@ -65,6 +90,9 @@ def render_image(block, ctx) -> Image.Image:
     else:
         x = (LIVE_WIDTH_PX - img.width) // 2
     canvas.paste(img, (x, 0))
+    if caption_img is not None:
+        cx = (LIVE_WIDTH_PX - caption_img.width) // 2
+        canvas.paste(caption_img, (cx, img.height + 4))
     return canvas
 
 

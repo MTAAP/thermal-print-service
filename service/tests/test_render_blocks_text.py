@@ -249,3 +249,101 @@ def test_rich_text_italic_and_underline_compose(fonts):
     # Composition adds height (underline) and width-spilling-into-height
     # (italic), so the composed render is at least as tall as plain.
     assert both.height >= plain.height
+
+
+def test_header_with_subtitle_renders_taller_than_without(fonts):
+    """The schema accepts header.subtitle — the renderer must use it."""
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import HeaderBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("header")
+    plain = fn(HeaderBlock(type="header", text="title"), ctx)
+    with_sub = fn(
+        HeaderBlock(type="header", text="title", subtitle="and a subtitle"), ctx,
+    )
+    assert with_sub.height > plain.height, (
+        "header with subtitle should be visibly taller than without"
+    )
+
+
+def test_header_styles_render_differently(fonts):
+    """Three distinct header styles must produce three distinct rasters —
+    previously ornamental and minimal silently collapsed to plain bold."""
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import HeaderBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("header")
+    inverse = fn(HeaderBlock(type="header", text="title", style="inverse_band"), ctx)
+    ornamental = fn(HeaderBlock(type="header", text="title", style="ornamental"), ctx)
+    minimal = fn(HeaderBlock(type="header", text="title", style="minimal"), ctx)
+    rasters = {inverse.tobytes(), ornamental.tobytes(), minimal.tobytes()}
+    assert len(rasters) == 3
+
+
+def test_section_title_styles_render_differently(fonts):
+    """All three section_title styles must render distinctly — inverse and
+    rule_above were no-ops before."""
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import SectionTitleBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("section_title")
+    underline = fn(SectionTitleBlock(type="section_title", text="X", style="underline"), ctx)
+    inverse = fn(SectionTitleBlock(type="section_title", text="X", style="inverse"), ctx)
+    rule_above = fn(SectionTitleBlock(type="section_title", text="X", style="rule_above"), ctx)
+    rasters = {underline.tobytes(), inverse.tobytes(), rule_above.tobytes()}
+    assert len(rasters) == 3
+
+
+def test_pull_quote_attribution_rendered_at_legible_size(fonts):
+    """Attribution must render at >= 14 px target (was 12, below thermal
+    legibility threshold). The attribution band should add at least ~22 px
+    to the rendered height."""
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import PullQuoteBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("pull_quote")
+    plain = fn(PullQuoteBlock(type="pull_quote", text="quote"), ctx)
+    attributed = fn(PullQuoteBlock(type="pull_quote", text="quote", attribution="A"), ctx)
+    attribution_band = attributed.height - plain.height
+    assert attribution_band >= 14, (
+        f"attribution band {attribution_band} px suggests <14 px attribution"
+    )
+
+
+def test_rich_text_sm_size_bumped_to_legible_threshold(fonts):
+    """rich_text size=sm must render at >= 14 px target — 12 was below
+    the thermal-print legibility floor."""
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import RichTextBlock, RichTextRun
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("rich_text")
+    sm = fn(RichTextBlock(type="rich_text", runs=[RichTextRun(text="Hg", size="sm")]), ctx)
+    # "Hg" exercises cap-height (H) and descender (g) so the bbox reflects
+    # the full glyph metric. 14 px Plex Medium yields a bbox >= 11 px tall;
+    # 12 px would land at ~9–10.
+    assert sm.height >= 14, f"rich_text sm height {sm.height} suggests <14 px target"
+
+
+def test_code_block_size_affects_rendered_height(fonts):
+    """code.size enum: sm < md < lg in rendered height."""
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import CodeBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("code")
+    sm = fn(CodeBlock(type="code", text="x", size="sm"), ctx)
+    md = fn(CodeBlock(type="code", text="x", size="md"), ctx)
+    lg = fn(CodeBlock(type="code", text="x", size="lg"), ctx)
+    assert sm.height < md.height < lg.height
+

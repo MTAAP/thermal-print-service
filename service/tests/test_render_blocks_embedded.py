@@ -96,3 +96,34 @@ def test_ascii_art_small_fits_wide_composition(fonts):
     assert img.width == 576
     # 100 chars at 5 px = 500 px — within 576. Some pixels must be black.
     assert img.histogram()[0] > 0
+
+
+def test_qr_with_caption_renders_taller_than_without(fonts):
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import QrBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("qr")
+    plain = fn(QrBlock(type="qr", data="x"), ctx)
+    captioned = fn(QrBlock(type="qr", data="x", caption="agenda"), ctx)
+    assert captioned.height > plain.height
+
+
+def test_image_with_caption_renders_taller_than_without(fonts):
+    from base64 import b64encode
+    from io import BytesIO
+    from PIL import Image as PILImage
+
+    from printer.render.blocks import renderer_for
+    from printer.render.renderer import RenderContext
+    from printer.schema.blocks import ImageBlock
+
+    ctx = RenderContext(fonts=fonts, max_decoded_image_pixels=10_000_000)
+    fn = renderer_for("image")
+    buf = BytesIO()
+    PILImage.new("1", (528, 100), 1).save(buf, format="PNG")
+    png_b64 = b64encode(buf.getvalue()).decode("ascii")
+    plain = fn(ImageBlock(type="image", png_base64=png_b64), ctx)
+    captioned = fn(ImageBlock(type="image", png_base64=png_b64, caption="hello"), ctx)
+    assert captioned.height > plain.height
