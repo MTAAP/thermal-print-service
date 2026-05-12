@@ -8,10 +8,10 @@ from printer.render.typography import (
     BODY_LINE_H,
     apply_italic,
     apply_underline,
-    iter_atoms,
-    render_body_line,
+    iter_prose_atoms,
+    render_prose_line,
     supersample_render,
-    wrap_body_text,
+    wrap_prose_text,
     wrap_text,
 )
 
@@ -225,11 +225,11 @@ def _render_section_title_rule_above(*, img, align, target_h, top_pad, bottom_pa
 
 @register("paragraph")
 def render_paragraph(block, ctx) -> Image.Image:
-    wrapped = wrap_body_text(block.text, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX)
+    wrapped = wrap_prose_text(block.text, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX)
     canvas = Image.new("1", (LIVE_WIDTH_PX, BODY_LINE_H * len(wrapped) + 4), 1)
     y = 0
     for line in wrapped:
-        line_img = render_body_line(line, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX)
+        line_img = render_prose_line(line, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX)
         if block.align == "center":
             x = (LIVE_WIDTH_PX - line_img.width) // 2
         elif block.align == "right":
@@ -347,13 +347,13 @@ def render_drop_cap(block, ctx) -> Image.Image:
     def max_w_for(idx: int) -> int:
         return LIVE_WIDTH_PX - indent if idx * BODY_LINE_H < cap_h else LIVE_WIDTH_PX
 
-    for atom in iter_atoms(block.rest, fonts=ctx.fonts):
+    for atom in iter_prose_atoms(block.rest, fonts=ctx.fonts):
         if atom.isspace():
             if has_text:
                 current.append(atom)
-                current_w += ctx.fonts.body_atom_width(atom)
+                current_w += ctx.fonts.prose_atom_width(atom)
             continue
-        aw = ctx.fonts.body_atom_width(atom)
+        aw = ctx.fonts.prose_atom_width(atom)
         if has_text and current_w + aw > max_w_for(line_index):
             line = "".join(current).rstrip()
             if line:
@@ -377,7 +377,7 @@ def render_drop_cap(block, ctx) -> Image.Image:
     y = 0
     for line in lines:
         x = indent if (y < cap_h) else 0
-        line_img = render_body_line(
+        line_img = render_prose_line(
             line, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX - x,
         )
         canvas.paste(line_img, (x, y))

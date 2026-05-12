@@ -8,16 +8,18 @@ from PIL import Image, ImageDraw, ImageFont
 
 from printer.render.dither import atkinson_dither
 
-# Body grid for paragraph and list copy. JetBrains Mono Bold @ 18 px is
-# rendered through ``supersample_render`` (2× supersample → Atkinson
-# dither), which lays down a heavier stroke than a 1-px bitmap font and
-# survives the thermal head's tendency to under-print thin lines.
-# Monospace at ~11 px per glyph, so the live width (528 px) fits ~48 cols.
+# Body grid for body/prose copy. Body face (``body()``, JetBrains Mono Bold)
+# and prose face (``prose()``, IBM Plex Sans Medium) both render at 18 px
+# through ``supersample_render`` (2× supersample → Atkinson dither). The
+# heavier stroke survives the thermal head's tendency to under-print thin
+# lines. Use body() for blocks where the glyph grid is structural (kv
+# values, table_compact, bullet markers); use prose() for prose blocks
+# (paragraph, list items, drop_cap.rest, kv keys).
 BODY_TARGET_SIZE_PX = 18
-BODY_GLYPH_PX = 11
 # Worst-case line height across body fonts: JB Mono Bold is 24 px at the
 # body target size; Noto Sans SC Bold (the CJK fallback) is 26 px. Lock
-# 26 px as the body line step so mixed-script lines never overlap.
+# 26 px as the body line step so mixed-script lines never overlap and
+# mixed body/prose blocks share a common line grid.
 BODY_LINE_H = 26
 
 # Spleen 8x16 is the mono font for ascii_art ``font: "default"``, where
@@ -68,6 +70,7 @@ class FontRegistry:
     def __init__(self, font_dir: str | Path) -> None:
         self._d = Path(font_dir)
         self._body: ImageFont.FreeTypeFont | None = None
+        self._prose: ImageFont.FreeTypeFont | None = None
         self._mono: ImageFont.FreeTypeFont | None = None
         self._small: ImageFont.FreeTypeFont | None = None
         self._mono_bdf = self._d / "spleen" / "spleen-8x16.bdf"
@@ -86,11 +89,31 @@ class FontRegistry:
         }
 
     def body(self) -> ImageFont.FreeTypeFont:
-        """JetBrains Mono Bold at the body target size (vector)."""
+        """JetBrains Mono Bold at the body target size (vector).
+
+        Used where the glyph grid is structural: kv values, table_compact
+        cells, bullet markers. Prose blocks (paragraph, lists items,
+        drop_cap.rest, kv keys) use ``prose()`` instead.
+        """
         if self._body is not None:
             return self._body
         self._body = ImageFont.truetype(str(self._jb["bold"]), size=BODY_TARGET_SIZE_PX)
         return self._body
+
+    def prose(self) -> ImageFont.FreeTypeFont:
+        """IBM Plex Sans Medium at the body target size (vector).
+
+        Proportional face used for paragraph copy, list items
+        (bullets/numbered/checklist), kv keys, and drop_cap.rest.
+        Reads as 'literary' rather than 'computer-y'. Renders through
+        ``supersample_render`` so the stroke survives the thermal head.
+        """
+        if self._prose is not None:
+            return self._prose
+        self._prose = ImageFont.truetype(
+            str(self._plex["medium"]), size=BODY_TARGET_SIZE_PX,
+        )
+        return self._prose
 
     def mono(self) -> ImageFont.FreeTypeFont:
         """Spleen 8x16 bitmap font at its native 16 px."""
@@ -136,6 +159,16 @@ class FontRegistry:
             font = self.cjk(bold=True)
         return int(font.getbbox(atom)[2])
 
+    def prose_atom_width(self, atom: str) -> int:
+        """Pixel width of an atom under the prose grid (Plex Sans Medium /
+        Noto Sans SC fallback). Mirrors ``body_atom_width`` for the
+        proportional prose path."""
+        primary_keys = _font_cmap_keys(str(self.prose().path))
+        font = self.prose()
+        if not all(ord(c) in primary_keys for c in atom) and self.has_cjk_font():
+            font = self.cjk(bold=False)
+        return int(font.getbbox(atom)[2])
+
 
 def _iter_atoms(text: str, *, primary_keys: frozenset[int]) -> Iterator[str]:
     """Atom-split a string using ``primary_keys`` (a font cmap) to decide
@@ -174,6 +207,13 @@ def iter_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
     """Body-grid atom iterator. See ``_iter_atoms`` for semantics."""
     yield from _iter_atoms(
         text, primary_keys=_font_cmap_keys(str(fonts.body().path)),
+    )
+
+
+def iter_prose_atoms(text: str, *, fonts: FontRegistry) -> Iterator[str]:
+    """Prose-grid atom iterator (Plex Sans Medium cmap)."""
+    yield from _iter_atoms(
+        text, primary_keys=_font_cmap_keys(str(fonts.prose().path)),
     )
 
 
@@ -268,6 +308,17 @@ def wrap_body_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list
     return wrap_text(
         text,
         primary_font=fonts.body(),
+        fallback_font=fallback,
+        max_width_px=max_width_px,
+    )
+
+
+def wrap_prose_text(text: str, *, fonts: FontRegistry, max_width_px: int) -> list[str]:
+    """Prose-grid wrap: IBM Plex Sans Medium with Noto Sans SC fallback."""
+    fallback = fonts.cjk(bold=False) if fonts.has_cjk_font() else None
+    return wrap_text(
+        text,
+        primary_font=fonts.prose(),
         fallback_font=fallback,
         max_width_px=max_width_px,
     )
@@ -428,6 +479,22 @@ def render_body_line(text: str, *, fonts: FontRegistry, max_width_px: int) -> Im
     return supersample_render(
         text=text or " ",
         font=fonts.body(),
+        fallback_font=fallback,
+        target_size_px=BODY_TARGET_SIZE_PX,
+        max_width_px=max_width_px,
+    )
+
+
+def render_prose_line(text: str, *, fonts: FontRegistry, max_width_px: int) -> Image.Image:
+    """Render a single line of prose copy through supersample + dither.
+
+    Uses IBM Plex Sans Medium as the primary face (proportional) with
+    Noto Sans SC Regular as the CJK fallback when bundled.
+    """
+    fallback = fonts.cjk(bold=False) if fonts.has_cjk_font() else None
+    return supersample_render(
+        text=text or " ",
+        font=fonts.prose(),
         fallback_font=fallback,
         target_size_px=BODY_TARGET_SIZE_PX,
         max_width_px=max_width_px,

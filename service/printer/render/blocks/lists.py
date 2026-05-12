@@ -5,15 +5,16 @@ from PIL import Image, ImageDraw
 from printer.constants import LIVE_WIDTH_PX
 from printer.render.blocks import register
 from printer.render.typography import (
-    BODY_GLYPH_PX,
     BODY_LINE_H,
     render_body_line,
+    render_prose_line,
     wrap_body_text,
+    wrap_prose_text,
 )
 
 
-def _wrap_item(text: str, *, fonts, width_px: int) -> list[str]:
-    return wrap_body_text(text, fonts=fonts, max_width_px=width_px)
+def _wrap_prose(text: str, *, fonts, width_px: int) -> list[str]:
+    return wrap_prose_text(text, fonts=fonts, max_width_px=width_px)
 
 
 @register("checklist")
@@ -21,7 +22,7 @@ def render_checklist(block, ctx) -> Image.Image:
     box_size = 16
     text_x = 2 + box_size + 8
     text_w = LIVE_WIDTH_PX - text_x
-    wrapped = [_wrap_item(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
+    wrapped = [_wrap_prose(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
     total_lines = sum(len(lines) for lines in wrapped)
     h = BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
@@ -30,7 +31,7 @@ def render_checklist(block, ctx) -> Image.Image:
     for lines in wrapped:
         d.rectangle([2, y + 4, 2 + box_size, y + 4 + box_size], outline=0, width=1)
         for li, line in enumerate(lines):
-            line_img = render_body_line(line, fonts=ctx.fonts, max_width_px=text_w)
+            line_img = render_prose_line(line, fonts=ctx.fonts, max_width_px=text_w)
             canvas.paste(line_img, (text_x, y + li * BODY_LINE_H))
         y += BODY_LINE_H * len(lines)
     return canvas
@@ -38,16 +39,24 @@ def render_checklist(block, ctx) -> Image.Image:
 
 @register("kv")
 def render_kv(block, ctx) -> Image.Image:
-    # Body and code share JetBrains Mono Bold @ 18 px now, so kv collapses
-    # into a single-font two-column layout. Keys land at x=0, values at the
-    # gutter; both wrap independently and the row height is the taller column.
+    """Keys in proportional prose, values in monospace.
+
+    Keys read as labels — proportional Plex Sans Medium gives them
+    'literary' weight. Values are data (versions, paths, hashes) and
+    stay in JetBrains Mono Bold for column alignment and predictable
+    glyph width.
+    """
     key_col_w = 200
     key_text_w = key_col_w - 8
     value_text_w = LIVE_WIDTH_PX - key_col_w
     pair_renders: list[tuple[list[str], list[str]]] = []
     for p in block.pairs:
-        key_lines = _wrap_item(p.key, fonts=ctx.fonts, width_px=key_text_w)
-        value_lines = _wrap_item(p.value, fonts=ctx.fonts, width_px=value_text_w)
+        key_lines = wrap_prose_text(
+            p.key, fonts=ctx.fonts, max_width_px=key_text_w,
+        )
+        value_lines = wrap_body_text(
+            p.value, fonts=ctx.fonts, max_width_px=value_text_w,
+        )
         pair_renders.append((key_lines, value_lines))
     total_lines = sum(max(len(k), len(v)) for k, v in pair_renders)
     h = BODY_LINE_H * total_lines + 4
@@ -58,7 +67,7 @@ def render_kv(block, ctx) -> Image.Image:
         for li in range(rows):
             row_y = y + li * BODY_LINE_H
             if li < len(key_lines):
-                key_img = render_body_line(
+                key_img = render_prose_line(
                     key_lines[li], fonts=ctx.fonts, max_width_px=key_text_w,
                 )
                 canvas.paste(key_img, (0, row_y))
@@ -76,18 +85,20 @@ def render_bullets(block, ctx) -> Image.Image:
     marker_x = 4
     text_x = marker_x + 24
     text_w = LIVE_WIDTH_PX - text_x
-    wrapped = [_wrap_item(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
+    wrapped = [_wrap_prose(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
     total_lines = sum(len(lines) for lines in wrapped)
     h = BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     y = 0
     for lines in wrapped:
+        # Marker stays in the mono body face so the glyph weight reads
+        # cleanly against the proportional prose item text.
         marker_img = render_body_line(
             block.marker, fonts=ctx.fonts, max_width_px=text_x - marker_x,
         )
         canvas.paste(marker_img, (marker_x, y))
         for li, line in enumerate(lines):
-            line_img = render_body_line(line, fonts=ctx.fonts, max_width_px=text_w)
+            line_img = render_prose_line(line, fonts=ctx.fonts, max_width_px=text_w)
             canvas.paste(line_img, (text_x, y + li * BODY_LINE_H))
         y += BODY_LINE_H * len(lines)
     return canvas
@@ -96,23 +107,27 @@ def render_bullets(block, ctx) -> Image.Image:
 @register("numbered")
 def render_numbered(block, ctx) -> Image.Image:
     n = len(block.items)
-    longest = f"{n}."
-    prefix_col_w = len(longest) * BODY_GLYPH_PX + 12
+    # Measure the widest prefix actually rendered — proportional digits are
+    # not uniform like the prior monospace assumption (BODY_GLYPH_PX).
+    longest_prefix = f"{n}."
+    sample_prefix = render_prose_line(
+        longest_prefix, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX,
+    )
+    prefix_col_w = sample_prefix.width + 12
     text_w = LIVE_WIDTH_PX - prefix_col_w
-    wrapped = [_wrap_item(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
+    wrapped = [_wrap_prose(item, fonts=ctx.fonts, width_px=text_w) for item in block.items]
     total_lines = sum(len(lines) for lines in wrapped)
     h = BODY_LINE_H * total_lines + 4
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     y = 0
     for i, lines in enumerate(wrapped):
         prefix = f"{i + 1}."
-        prefix_img = render_body_line(
+        prefix_img = render_prose_line(
             prefix, fonts=ctx.fonts, max_width_px=prefix_col_w,
         )
-        # Right-align the prefix within prefix_col_w.
         canvas.paste(prefix_img, (prefix_col_w - prefix_img.width - 4, y))
         for li, line in enumerate(lines):
-            line_img = render_body_line(line, fonts=ctx.fonts, max_width_px=text_w)
+            line_img = render_prose_line(line, fonts=ctx.fonts, max_width_px=text_w)
             canvas.paste(line_img, (prefix_col_w, y + li * BODY_LINE_H))
         y += BODY_LINE_H * len(lines)
     return canvas
@@ -120,9 +135,10 @@ def render_numbered(block, ctx) -> Image.Image:
 
 @register("table_compact")
 def render_table_compact(block, ctx) -> Image.Image:
-    # Table cells render as single-line body fragments. Column widths come
-    # from the widest fragment per column under the supersampled body grid;
-    # if the total exceeds the live width, columns scale down proportionally.
+    """Cells render in the mono body face. Tables on receipts are typically
+    data: numbers, version strings, ids — column alignment matters more
+    than literary weight, so cells stay monospaced even though paragraph
+    and lists are now proportional."""
     rows = block.rows
     cols = len(rows[0])
     headers = block.headers
@@ -132,7 +148,6 @@ def render_table_compact(block, ctx) -> Image.Image:
     if headers is not None:
         all_rows.append(list(headers))
 
-    # Pre-render each cell so we know its actual rendered width.
     rendered: dict[tuple[int, int], Image.Image] = {}
     col_widths: list[int] = [0] * cols
     for r_idx, row in enumerate(all_rows):
@@ -141,7 +156,7 @@ def render_table_compact(block, ctx) -> Image.Image:
             rendered[(r_idx, c)] = img
             if img.width > col_widths[c]:
                 col_widths[c] = img.width
-    col_widths = [w + 12 for w in col_widths]  # gutter
+    col_widths = [w + 12 for w in col_widths]
 
     total_w = sum(col_widths)
     if total_w > LIVE_WIDTH_PX:
@@ -159,7 +174,6 @@ def render_table_compact(block, ctx) -> Image.Image:
         x = 0
         for c in range(cols):
             img = rendered[(row_idx, c)]
-            # Re-fit to the (possibly scaled-down) column width.
             if img.width > col_widths[c] - 12:
                 cell = render_body_line(
                     all_rows[row_idx][c], fonts=ctx.fonts,
