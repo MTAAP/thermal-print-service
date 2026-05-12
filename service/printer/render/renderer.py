@@ -11,6 +11,7 @@ from printer.constants import GUTTER_PX, LIVE_WIDTH_PX, PRINT_HEAD_WIDTH_PX
 from printer.render.blocks import embedded as _embedded  # noqa: F401
 from printer.render.blocks import flow as _flow  # noqa: F401
 from printer.render.blocks import lists as _lists  # noqa: F401
+from printer.render.blocks import literary as _literary  # noqa: F401
 from printer.render.blocks import renderer_for
 from printer.render.blocks import text as _text  # noqa: F401
 from printer.render.blocks import visual as _visual  # noqa: F401
