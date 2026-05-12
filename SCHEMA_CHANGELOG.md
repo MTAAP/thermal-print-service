@@ -3,6 +3,29 @@
 Each removal/rename gets a one-line entry with the renderer version it landed in
 and the migration hint surfaced in 400 responses.
 
+## v0.9.1
+
+ascii_art legibility fix — both `font: "default"` (Spleen 8×16) and
+`font: "small"` (Spleen 5×8) were rendered at native bitmap size with
+1-px strokes (0.125 mm on the 8-dpmm head). That's at or below the
+thermal head's reliable-activation threshold (~0.25 mm) — strokes
+fragmented and "small" was nearly illegible on real paper.
+
+**Renderer:** both sizes now NEAREST-upsample 2× after rendering, so each
+bitmap pixel becomes a 2×2 dot block. Strokes go from 0.125 mm to 0.25 mm
+(solidly above the threshold), and cell sizes double for legibility.
+
+**Effective sizes:**
+- `default`: 16×32 px cells (~4 mm tall, ~33 cols across the head)
+- `small`: 10×16 px cells (~2 mm tall, ~52 cols across the head)
+
+The trade-off is column count vs. the prior native sizes (was ~72 / ~115).
+Density-over-legibility was the bug; legibility wins. ASCII compositions
+wider than the new column counts will clip — the same constraint that
+already applies to other body text.
+
+Schema description updated; no schema field changes. Backwards-compatible.
+
 ## v0.9.0
 
 Literary-frame block additions — seven new block types for letter, journal,

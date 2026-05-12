@@ -149,21 +149,36 @@ def render_barcode(block, ctx) -> Image.Image:
 
 @register("ascii_art")
 def render_ascii_art(block, ctx) -> Image.Image:
-    # ``default`` uses Spleen 8x16 (~72 cols at glyph width 8); ``small``
-    # uses Spleen 5x8 (~115 cols at glyph width 5) for dense compositions.
-    # ascii_art keeps the tighter mono grid even though body() is now
-    # Spleen 12x24 — char-grid art is sized for fixed column counts and
-    # 12 px glyphs would reflow most pieces past the live width.
+    # Bitmap fonts at native size print as 1-px strokes (0.125 mm on the
+    # 8-dpmm head). That's at or below the head's reliable activation
+    # threshold — strokes fragment and small-tier glyphs read as washed-out
+    # patches on real paper. Render to a half-width canvas at native size,
+    # then NEAREST-upsample 2× so each bitmap pixel becomes a 2×2 dot block:
+    # strokes go from 0.125 mm to 0.25 mm (solidly above the threshold), and
+    # cell sizes double for legibility.
+    #
+    # Effective cell sizes after upsampling:
+    #   default (Spleen 8×16 × 2): 16×32 px → 2×4 mm → ~33 cols across the head
+    #   small   (Spleen 5×8  × 2): 10×16 px → 1.25×2 mm → ~52 cols
+    #
+    # The trade-off is fewer columns vs. the prior native sizes (was ~72 /
+    # ~115). Density-over-legibility was the bug; legibility wins.
     if block.font == "small":
         font = ctx.fonts.small()
-        line_h = 9
+        native_line_h = 8
     else:
         font = ctx.fonts.mono()
-        line_h = 18
+        native_line_h = 16
     lines = block.text.split("\n") or [""]
-    h = line_h * len(lines) + 4
-    canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
-    d = ImageDraw.Draw(canvas)
+    native_w = LIVE_WIDTH_PX // 2
+    native_h = native_line_h * len(lines)
+    native = Image.new("1", (native_w, native_h), 1)
+    d = ImageDraw.Draw(native)
     for i, line in enumerate(lines):
-        d.text((0, i * line_h), line, fill=0, font=font)
+        d.text((0, i * native_line_h), line, fill=0, font=font)
+    scaled = native.resize((native_w * 2, native_h * 2), Image.Resampling.NEAREST)
+    top_pad = 2
+    bottom_pad = 2
+    canvas = Image.new("1", (LIVE_WIDTH_PX, scaled.height + top_pad + bottom_pad), 1)
+    canvas.paste(scaled, (0, top_pad))
     return canvas

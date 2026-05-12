@@ -37,7 +37,7 @@
     {"type": "section_title", "text": "PHASE 5 EMBEDDED"},
     {"type": "barcode", "data": "TPS-001", "format": "CODE128"},
     {"type": "ascii_art", "text": "  /\\_/\\\n ( o.o )\n  > ^ <\n cat says hi"},
-    {"type": "ascii_art", "font": "small", "text": "Spleen 5x8 dense ASCII fits more cols across the head: this is a wide line that would clip in default font."},
+    {"type": "ascii_art", "font": "small", "text": "small font fits ~52 cols at thermal-safe stroke"},
     {"type": "section_title", "text": "LITERARY FRAME", "style": "rule_above"},
     {"type": "byline", "text": "by tim kraus"},
     {"type": "dateline", "location": "Anytown", "date": "May 12"},

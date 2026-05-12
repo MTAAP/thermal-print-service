@@ -64,8 +64,9 @@ def test_ascii_art_default_renders(fonts):
     ]})
     img = render_document(doc, fonts=fonts)
     assert img.width == 576
-    # Three lines × 14 px = 42 px + padding
-    assert img.height >= 42
+    # After 2x upsample of Spleen 8x16 (line h=16 native → 32 scaled),
+    # three lines = 96 px + small pad.
+    assert img.height >= 96
 
 
 def test_ascii_art_small_uses_smaller_font(fonts):
@@ -85,17 +86,37 @@ def test_ascii_art_small_uses_smaller_font(fonts):
     assert small.tobytes() != big.tobytes()
 
 
-def test_ascii_art_small_fits_wide_composition(fonts):
-    """Spleen 5x8 should accommodate denser horizontal compositions than
-    the default Spleen 8x16 face. A ~100-column line should not clip the
-    canvas at 576 px."""
-    wide = "x" * 100
+def test_ascii_art_glyphs_render_with_thermal_safe_stroke(fonts):
+    """Each painted pixel must come from a 2x2 block of identical pixels —
+    confirms the NEAREST upsample is in effect so strokes survive the
+    thermal head's reliable-activation threshold (~0.25 mm).
+
+    Native Spleen has 1-px strokes (0.125 mm) which fragment on real paper.
+    Probe: find any ink pixel and verify a 2x2 cell anchored at, left of,
+    or above it is fully inked.
+    """
+    art = "Hi"
     img = render_document(Document.model_validate({"blocks": [
-        {"type": "ascii_art", "text": wide, "font": "small"}
+        {"type": "ascii_art", "text": art}
     ]}), fonts=fonts)
-    assert img.width == 576
-    # 100 chars at 5 px = 500 px — within 576. Some pixels must be black.
-    assert img.histogram()[0] > 0
+    px = img.load()
+    for y in range(1, img.height - 1):
+        for x in range(1, img.width - 1):
+            if px[x, y] == 0:
+                anchors = [
+                    (x, y), (x - 1, y), (x, y - 1), (x - 1, y - 1),
+                ]
+                any_inked = any(
+                    px[ax, ay] == 0 and px[ax + 1, ay] == 0
+                    and px[ax, ay + 1] == 0 and px[ax + 1, ay + 1] == 0
+                    for ax, ay in anchors
+                )
+                assert any_inked, (
+                    f"ink pixel at ({x},{y}) has no fully-inked 2x2 neighbor; "
+                    "upsample missing — stroke is 1 px (below thermal threshold)"
+                )
+                return
+    raise AssertionError("no ink pixels found in rendered ascii_art")
 
 
 def test_qr_with_caption_renders_taller_than_without(fonts):

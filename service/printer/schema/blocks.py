@@ -495,8 +495,9 @@ class AsciiArtBlock(_Block):
     font: Literal["default", "small"] = Field(
         default="default",
         description=(
-            "default: Spleen 8×16 (~72 cols). small: Spleen 5×8 (~115 cols, "
-            "for dense art)."
+            "default: Spleen 8×16 upsampled 2× (~33 cols, ~4 mm cell). "
+            "small: Spleen 5×8 upsampled 2× (~52 cols, ~2 mm cell). "
+            "Both render with thermal-safe 0.25 mm strokes."
         ),
     )
 
