@@ -76,6 +76,20 @@ Some shapes the surface accommodates well (not an exhaustive list — invent fre
 - **Visual rhythm matters.** Open with a `header`, end with a `footer`, separate sections with `rule` or `section_title`. Use `spacer` to breathe. The output should look like someone cared.
 - **Length is a choice, not a default.** The default cap is 2 meters of paper. For long-form scrolls, set `options.max_length_mm: null` deliberately. For banners and chained outputs, set `options.auto_cut: false`.
 
+## Literary blocks — the frame
+
+For documents that are letters, journals, scrolls, or news-style snippets, the literary-frame blocks carry the typographic voice of each role. Pick them deliberately:
+
+- **`epigraph`** — short quoted opener under a header. Italic, indented both sides, optional attribution. Quieter than `pull_quote` (which is loud and pulled-from-the-middle).
+- **`byline`** — author credit between the title and the body. Italic 14 px, left-aligned.
+- **`dateline`** — journalistic place-and-date opener ("ANYTOWN, MAY 12 ——"). Auto-uppercased. Sits at the top of a dispatch.
+- **`salutation`** — letter opener ("Dear Sam,"). Body size, extra breathing room below.
+- **`signature`** — right-aligned italic sign-off with optional `closing` ("Yours,") above the `name`.
+- **`colophon`** — end-matter production note. Centered italic 14 in a narrow column.
+- **`address`** — letterhead lines, tight spacing, left-aligned.
+
+None of these accept `align`; the placement is baked in. For loose freeform sign-offs, use `paragraph` with `emphasis: italic` instead.
+
 ## Error contract
 
 `print_document` returns `{ok: false, status: 400, details: {errors: [...]}}` for schema violations. Each error includes:
@@ -155,12 +169,12 @@ A literary scroll:
   "document": {
     "document_type": "scroll",
     "blocks": [
-      {"type": "header", "text": "Field Notes", "subtitle": "vol. III · spring", "style": "ornamental"},
-      {"type": "rule", "style": "double"},
+      {"type": "header", "text": "Field Notes", "subtitle": "vol. III · spring"},
+      {"type": "byline", "text": "by tim kraus"},
+      {"type": "epigraph", "text": "It is the constraint of paper, not the screen, that makes the words slow down.", "attribution": "field notebook"},
       {"type": "drop_cap", "first_letter": "The", "rest": "morning fog refused to lift, even past nine. We took the lower path and watched the gulls patrol the breakwater for nearly an hour."},
-      {"type": "pull_quote", "text": "It is the constraint of paper, not the screen, that makes the words slow down.", "attribution": "field notebook"},
-      {"type": "ornament", "pattern": "minimal_dots"},
-      {"type": "footer", "text": "rolled and tied with twine"}
+      {"type": "signature", "name": "T.", "closing": "yours from the coast,"},
+      {"type": "colophon", "text": "Printed on 80 mm thermal, Anytown, spring 2026."}
     ]
   }
 }
