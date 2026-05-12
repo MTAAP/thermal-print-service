@@ -83,3 +83,28 @@ def render_byline(block, ctx) -> Image.Image:
     canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
     canvas.paste(img, (0, top_pad))
     return canvas
+
+
+# ===== dateline =====
+
+
+@register("dateline")
+def render_dateline(block, ctx) -> Image.Image:
+    """Journalistic location + date opener. Plex Bold 14, uppercased.
+
+    Format: ``{LOCATION}, {DATE} ——`` (double em-dash).
+    """
+    size_px = 14
+    font = ctx.fonts.display(weight="bold", size_px=size_px)
+    fallback = cjk_fallback(ctx.fonts, bold=True)
+    text = f"{block.location.upper()}, {block.date.upper()} ——"
+    img = supersample_render(
+        text=text, font=font, fallback_font=fallback,
+        target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+    )
+    top_pad = 4
+    bottom_pad = 6
+    total_h = top_pad + img.height + bottom_pad
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    canvas.paste(img, (0, top_pad))
+    return canvas

@@ -69,3 +69,19 @@ def test_byline_ink_in_left_columns(fonts):
         px[x, y] == 0 for x in range(20) for y in range(img.height)
     )
     assert has_left_ink
+
+
+def test_dateline_uppercases_location_and_date(fonts):
+    from printer.schema.blocks import DatelineBlock
+    fn = renderer_for("dateline")
+    lower = fn(DatelineBlock(type="dateline", location="anytown", date="may 12"), _ctx(fonts))
+    upper = fn(DatelineBlock(type="dateline", location="ANYTOWN", date="MAY 12"), _ctx(fonts))
+    assert lower.tobytes() == upper.tobytes()
+
+
+def test_dateline_left_aligned(fonts):
+    from printer.schema.blocks import DatelineBlock
+    fn = renderer_for("dateline")
+    img = fn(DatelineBlock(type="dateline", location="X", date="Y"), _ctx(fonts))
+    assert img.width == 528
+    assert img.height > 0
