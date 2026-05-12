@@ -7,6 +7,7 @@ from printer.render.blocks import register
 from printer.render.typography import (
     apply_italic,
     cjk_fallback,
+    render_prose_line,
     supersample_render,
     wrap_text,
 )
@@ -104,6 +105,24 @@ def render_dateline(block, ctx) -> Image.Image:
     )
     top_pad = 4
     bottom_pad = 6
+    total_h = top_pad + img.height + bottom_pad
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    canvas.paste(img, (0, top_pad))
+    return canvas
+
+
+# ===== salutation =====
+
+
+@register("salutation")
+def render_salutation(block, ctx) -> Image.Image:
+    """Letter / note opener. Plex Medium 18 (body size), left, extra
+    bottom pad so the body that follows sits a beat below."""
+    img = render_prose_line(
+        block.text, fonts=ctx.fonts, max_width_px=LIVE_WIDTH_PX,
+    )
+    top_pad = 4
+    bottom_pad = 14
     total_h = top_pad + img.height + bottom_pad
     canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
     canvas.paste(img, (0, top_pad))

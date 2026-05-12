@@ -85,3 +85,10 @@ def test_dateline_left_aligned(fonts):
     img = fn(DatelineBlock(type="dateline", location="X", date="Y"), _ctx(fonts))
     assert img.width == 528
     assert img.height > 0
+
+
+def test_salutation_has_breathing_room_below(fonts):
+    from printer.schema.blocks import SalutationBlock
+    fn = renderer_for("salutation")
+    img = fn(SalutationBlock(type="salutation", text="Dear Sam,"), _ctx(fonts))
+    assert img.height >= 30
