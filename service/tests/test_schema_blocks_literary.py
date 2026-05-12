@@ -99,10 +99,8 @@ def test_all_literary_types_in_block_type_names():
 
 
 def test_each_literary_type_renders_via_pipeline(fonts):
-    """Smoke test: every new block parses and routes through the pipeline.
-    The render-side may produce a placeholder canvas (renderers land in a
-    follow-up commit) but the document must validate and render to *some*
-    non-zero canvas through the existing fallback path."""
+    """Smoke test: every literary block parses and renders to a non-zero
+    canvas through the live renderer registered in ``literary.py``."""
     from printer.render.renderer import render_document
     payloads = [
         {"type": "epigraph", "text": "x"},
