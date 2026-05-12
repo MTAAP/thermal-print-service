@@ -62,3 +62,24 @@ def render_epigraph(block, ctx) -> Image.Image:
         ax = LIVE_WIDTH_PX - side_indent - attr_img.width
         canvas.paste(attr_img, (ax, y + 4))
     return canvas
+
+
+# ===== byline =====
+
+
+@register("byline")
+def render_byline(block, ctx) -> Image.Image:
+    """Author credit. Plex Medium italic 14 px, left-aligned, small."""
+    size_px = 14
+    font = ctx.fonts.display(weight="medium", size_px=size_px)
+    fallback = cjk_fallback(ctx.fonts, bold=False)
+    img = apply_italic(supersample_render(
+        text=block.text, font=font, fallback_font=fallback,
+        target_size_px=size_px, max_width_px=LIVE_WIDTH_PX,
+    ))
+    top_pad = 4
+    bottom_pad = 8
+    total_h = top_pad + img.height + bottom_pad
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    canvas.paste(img, (0, top_pad))
+    return canvas

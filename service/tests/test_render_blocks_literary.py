@@ -50,3 +50,22 @@ def test_epigraph_with_attribution_renders_ink_in_attribution_band(fonts):
         "attributed canvas allocates extra height but paints no ink — "
         "attribution may have been silently dropped"
     )
+
+
+def test_byline_renders_italic_at_14px(fonts):
+    from printer.schema.blocks import BylineBlock
+    fn = renderer_for("byline")
+    img = fn(BylineBlock(type="byline", text="by Tim Kraus"), _ctx(fonts))
+    assert img.width == 528
+    assert img.height >= 20
+
+
+def test_byline_ink_in_left_columns(fonts):
+    from printer.schema.blocks import BylineBlock
+    fn = renderer_for("byline")
+    img = fn(BylineBlock(type="byline", text="by x"), _ctx(fonts))
+    px = img.load()
+    has_left_ink = any(
+        px[x, y] == 0 for x in range(20) for y in range(img.height)
+    )
+    assert has_left_ink
