@@ -265,6 +265,13 @@ Each block has a `type` field; remaining fields depend on the type. The `align: 
 | `pull_quote` | Indented quote with vertical bar | `text`, optional `attribution` |
 | `drop_cap` | First letter oversized, body wraps around | `first_letter`, `rest` |
 | `footer` | Italic centered text at end | `text` |
+| `epigraph` | Quiet quoted opener (italic, indented both sides) | `text`, optional `attribution` |
+| `byline` | Author credit between title and body | `text` |
+| `dateline` | Journalistic place + date opener (auto-uppercased) | `location`, `date` |
+| `salutation` | Letter opener with extra space below | `text` |
+| `signature` | Right-aligned italic sign-off | `name`, optional `closing` |
+| `colophon` | End-matter production note (italic centered) | `text` |
+| `address` | Letterhead lines, tight spacing | `lines: list[str]` (1–8) |
 
 #### Lists & data
 

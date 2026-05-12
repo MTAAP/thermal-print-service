@@ -3,6 +3,34 @@
 Each removal/rename gets a one-line entry with the renderer version it landed in
 and the migration hint surfaced in 400 responses.
 
+## v0.9.0
+
+Literary-frame block additions — seven new block types for letter, journal,
+news-clipping, and scroll-style documents. All backwards-compatible (no
+removals or renames).
+
+**New block types:**
+
+- **`epigraph`** — `text` (required, 1–2000), optional `attribution` (≤200).
+  Plex Medium italic 16, indented 60 px on both sides; attribution rendered
+  right-aligned beneath in italic 13 with em-dash prefix.
+- **`byline`** — `text` (required, 1–100). Plex Medium italic 14, left.
+- **`dateline`** — `location` (required, 1–60), `date` (required, 1–60).
+  Plex Bold 14, both fields uppercased at render time, formatted
+  `{LOCATION}, {DATE} ——`.
+- **`salutation`** — `text` (required, 1–120). Plex Medium 18 (body size),
+  left, extra bottom pad so the body sits a beat below.
+- **`signature`** — `name` (required, 1–80), optional `closing` (≤80). Plex
+  Medium italic 18, right-aligned; name prefixed with `— `, closing rendered
+  on its own line above.
+- **`colophon`** — `text` (required, 1–500). Plex Medium italic 14, centered
+  in a 360 px column.
+- **`address`** — `lines` (required list, 1–8 entries, each 1–100). Plex
+  Medium 16, left, 22 px line step (tighter than body 26).
+
+None of the new blocks accept `align` — each has an intrinsic placement
+suited to its role. The `ALIGN_ALLOWED` set is unchanged.
+
 ## v0.8.0
 
 Audit-fixes pass — schema additions, loosened floors, renderer changes for
