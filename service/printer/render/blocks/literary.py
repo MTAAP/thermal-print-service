@@ -164,3 +164,39 @@ def render_signature(block, ctx) -> Image.Image:
         canvas.paste(p, (x, y))
         y += p.height + line_gap
     return canvas
+
+
+# ===== colophon =====
+
+
+COLOPHON_COL_W = 360  # narrow centered column (84 px gutter each side)
+
+
+@register("colophon")
+def render_colophon(block, ctx) -> Image.Image:
+    """End-matter production note. Plex Medium italic 14, centered in a
+    narrow ~360 px column with ~84 px gutters."""
+    size_px = 14
+    font = ctx.fonts.display(weight="medium", size_px=size_px)
+    fallback = cjk_fallback(ctx.fonts, bold=False)
+    lines = wrap_text(
+        block.text, primary_font=font, fallback_font=fallback,
+        max_width_px=COLOPHON_COL_W,
+    )
+    line_imgs = [
+        apply_italic(supersample_render(
+            text=line, font=font, fallback_font=fallback,
+            target_size_px=size_px, max_width_px=COLOPHON_COL_W,
+        )) for line in lines
+    ]
+    line_step = max((img.height for img in line_imgs), default=size_px) + 2
+    top_pad = 12
+    bottom_pad = 6
+    total_h = top_pad + line_step * len(line_imgs) + bottom_pad
+    canvas = Image.new("1", (LIVE_WIDTH_PX, total_h), 1)
+    y = top_pad
+    for img in line_imgs:
+        x = (LIVE_WIDTH_PX - img.width) // 2
+        canvas.paste(img, (x, y))
+        y += line_step
+    return canvas

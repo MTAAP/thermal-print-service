@@ -115,3 +115,38 @@ def test_signature_with_closing_taller_than_name_only(fonts):
         _ctx(fonts),
     )
     assert with_closing.height > plain.height
+
+
+def test_colophon_is_centered_in_narrow_column(fonts):
+    from printer.schema.blocks import ColophonBlock
+    fn = renderer_for("colophon")
+    img = fn(
+        ColophonBlock(type="colophon", text="Set in IBM Plex Sans Medium."),
+        _ctx(fonts),
+    )
+    px = img.load()
+    for x in (0, 30, 59):
+        assert all(px[x, y] == 1 for y in range(img.height)), (
+            f"column {x} has ink; colophon should sit in a narrow centered column"
+        )
+    for x in (img.width - 1, img.width - 30, img.width - 60):
+        assert all(px[x, y] == 1 for y in range(img.height)), (
+            f"column {x} has ink; colophon should sit in a narrow centered column"
+        )
+
+
+def test_colophon_wraps_long_text(fonts):
+    from printer.schema.blocks import ColophonBlock
+    fn = renderer_for("colophon")
+    short = fn(ColophonBlock(type="colophon", text="Hi."), _ctx(fonts))
+    long = fn(
+        ColophonBlock(
+            type="colophon",
+            text=(
+                "Set in IBM Plex Sans Medium. Printed on 80 mm thermal "
+                "paper, Anytown press, spring 2026."
+            ),
+        ),
+        _ctx(fonts),
+    )
+    assert long.height > short.height
