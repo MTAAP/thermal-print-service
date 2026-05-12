@@ -25,7 +25,9 @@ def test_epigraph_renders_with_indent_both_sides(fonts):
         )
 
 
-def test_epigraph_with_attribution_taller(fonts):
+def test_epigraph_with_attribution_renders_ink_in_attribution_band(fonts):
+    """The attributed version must paint ink in the additional vertical space
+    it allocates — not just reserve empty pad."""
     from printer.schema.blocks import EpigraphBlock
     fn = renderer_for("epigraph")
     plain = fn(EpigraphBlock(type="epigraph", text="Hello."), _ctx(fonts))
@@ -34,3 +36,18 @@ def test_epigraph_with_attribution_taller(fonts):
         _ctx(fonts),
     )
     assert attributed.height > plain.height
+    # Attribution must paint ink in the indented column below where the plain
+    # version ended. Probe x in [60, 468) (the indented text column) on rows
+    # >= plain.height for at least one ink pixel.
+    px = attributed.load()
+    side_indent = 60
+    text_end = attributed.width - side_indent
+    has_attribution_ink = any(
+        px[x, y] == 0
+        for y in range(plain.height, attributed.height)
+        for x in range(side_indent, text_end)
+    )
+    assert has_attribution_ink, (
+        "attributed canvas allocates extra height but paints no ink — "
+        "attribution may have been silently dropped"
+    )

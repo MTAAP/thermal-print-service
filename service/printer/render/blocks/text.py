@@ -8,20 +8,13 @@ from printer.render.typography import (
     BODY_LINE_H,
     apply_italic,
     apply_underline,
+    cjk_fallback,
     iter_prose_atoms,
     render_prose_line,
     supersample_render,
     wrap_prose_text,
     wrap_text,
 )
-
-
-def _cjk_fallback(ctx, *, bold: bool):
-    """Noto Sans SC handle to pass as ``fallback_font``, or ``None`` when the
-    CJK font isn't bundled (so callers stay on the fast path)."""
-    if not ctx.fonts.has_cjk_font():
-        return None
-    return ctx.fonts.cjk(bold=bold)
 
 
 def _place_horizontally(img_w: int, align: str, *, margin: int = 0) -> int:
@@ -39,7 +32,7 @@ def render_header(block, ctx) -> Image.Image:
     header_font = ctx.fonts.display(weight="bold", size_px=28)
     title = supersample_render(
         text=block.text, font=header_font,
-        fallback_font=_cjk_fallback(ctx, bold=True),
+        fallback_font=cjk_fallback(ctx.fonts, bold=True),
         target_size_px=28, max_width_px=LIVE_WIDTH_PX - 24,
     )
     subtitle_img = None
@@ -47,7 +40,7 @@ def render_header(block, ctx) -> Image.Image:
         subtitle_img = supersample_render(
             text=block.subtitle,
             font=ctx.fonts.display(weight="medium", size_px=16),
-            fallback_font=_cjk_fallback(ctx, bold=False),
+            fallback_font=cjk_fallback(ctx.fonts, bold=False),
             target_size_px=16, max_width_px=LIVE_WIDTH_PX - 24,
         )
     if block.style == "inverse_band":
@@ -101,7 +94,7 @@ def _render_header_ornamental(*, title, subtitle_img, align, ctx, bottom_pad):
     orn = supersample_render(
         text=ornament_glyph,
         font=ornament_font,
-        fallback_font=_cjk_fallback(ctx, bold=True),
+        fallback_font=cjk_fallback(ctx.fonts, bold=True),
         target_size_px=orn_size_px, max_width_px=LIVE_WIDTH_PX,
     )
     gap = 12
@@ -158,7 +151,7 @@ def render_section_title(block, ctx) -> Image.Image:
     title_font = ctx.fonts.display(weight="medium", size_px=22)
     img = supersample_render(
         text=block.text, font=title_font,
-        fallback_font=_cjk_fallback(ctx, bold=False),
+        fallback_font=cjk_fallback(ctx.fonts, bold=False),
         target_size_px=22, max_width_px=LIVE_WIDTH_PX,
     )
     if block.style == "inverse":
@@ -246,7 +239,7 @@ def render_paragraph(block, ctx) -> Image.Image:
 def render_footer(block, ctx) -> Image.Image:
     size_px = 16
     font = ctx.fonts.display(weight="bold", size_px=size_px)
-    fallback = _cjk_fallback(ctx, bold=True)
+    fallback = cjk_fallback(ctx.fonts, bold=True)
     lines = wrap_text(
         block.text,
         primary_font=font,
@@ -277,7 +270,7 @@ def render_large_text(block, ctx) -> Image.Image:
     img = supersample_render(
         text=block.text,
         font=ctx.fonts.display(weight="bold", size_px=target),
-        fallback_font=_cjk_fallback(ctx, bold=True),
+        fallback_font=cjk_fallback(ctx.fonts, bold=True),
         target_size_px=target, max_width_px=LIVE_WIDTH_PX,
     )
     canvas = Image.new("1", (LIVE_WIDTH_PX, img.height + 8), 1)
@@ -299,7 +292,7 @@ def render_pull_quote(block, ctx) -> Image.Image:
     quote_img = supersample_render(
         text=block.text,
         font=ctx.fonts.display(weight="medium", size_px=20),
-        fallback_font=_cjk_fallback(ctx, bold=False),
+        fallback_font=cjk_fallback(ctx.fonts, bold=False),
         target_size_px=20, max_width_px=text_w,
     )
     parts = [quote_img]
@@ -309,7 +302,7 @@ def render_pull_quote(block, ctx) -> Image.Image:
         attr_img = supersample_render(
             text=f"— {block.attribution}",
             font=ctx.fonts.display(weight="medium", size_px=14),
-            fallback_font=_cjk_fallback(ctx, bold=False),
+            fallback_font=cjk_fallback(ctx.fonts, bold=False),
             target_size_px=14, max_width_px=text_w,
         )
         parts.append(attr_img)
@@ -331,7 +324,7 @@ def render_drop_cap(block, ctx) -> Image.Image:
     cap_img = supersample_render(
         text=block.first_letter,
         font=ctx.fonts.display(weight="bold", size_px=cap_size),
-        fallback_font=_cjk_fallback(ctx, bold=True),
+        fallback_font=cjk_fallback(ctx.fonts, bold=True),
         target_size_px=cap_size, max_width_px=cap_size + 8,
         factor=4, dither="ordered",
     )
@@ -394,7 +387,7 @@ def render_code(block, ctx) -> Image.Image:
     target_px = sizes.get(block.size, 16)
     line_h = target_px + 4
     lines = block.text.split("\n")
-    cjk_fb = _cjk_fallback(ctx, bold=False)
+    cjk_fb = cjk_fallback(ctx.fonts, bold=False)
     rendered = [
         supersample_render(
             text=line if line else " ",
@@ -425,7 +418,7 @@ def render_rich_text(block, ctx) -> Image.Image:
         frag = supersample_render(
             text=run.text,
             font=ctx.fonts.display(weight=weight, size_px=size_target),
-            fallback_font=_cjk_fallback(ctx, bold=run.bold),
+            fallback_font=cjk_fallback(ctx.fonts, bold=run.bold),
             target_size_px=size_target,
             max_width_px=LIVE_WIDTH_PX,
         )

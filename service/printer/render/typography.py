@@ -468,6 +468,15 @@ def supersample_render(
     return atkinson_dither(img1x)
 
 
+def cjk_fallback(fonts: FontRegistry, *, bold: bool) -> ImageFont.FreeTypeFont | None:
+    """Return a Noto Sans SC font handle for non-Latin codepoints, or
+    ``None`` when the CJK font isn't bundled (so callers stay on the
+    fast path)."""
+    if not fonts.has_cjk_font():
+        return None
+    return fonts.cjk(bold=bold)
+
+
 def render_body_line(text: str, *, fonts: FontRegistry, max_width_px: int) -> Image.Image:
     """Render a single line of body copy through the supersample + dither
     path. Empty input is rendered as a single space so callers always get a
