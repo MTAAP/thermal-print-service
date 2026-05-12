@@ -113,6 +113,7 @@ def test_qr_with_caption_renders_taller_than_without(fonts):
 def test_image_with_caption_renders_taller_than_without(fonts):
     from base64 import b64encode
     from io import BytesIO
+
     from PIL import Image as PILImage
 
     from printer.render.blocks import renderer_for

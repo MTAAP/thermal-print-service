@@ -1,4 +1,5 @@
 from printer.render.renderer import render_document
+from printer.render.typography import BODY_LINE_H
 from printer.schema.document import Document
 
 
@@ -62,9 +63,6 @@ def test_sparkline_handles_flat_series(fonts):
     ]})
     img = render_document(doc, fonts=fonts)
     assert img.height > 0
-
-
-from printer.render.typography import BODY_LINE_H
 
 
 def test_progress_bar_label_does_not_overlap_bar(fonts):
