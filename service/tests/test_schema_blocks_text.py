@@ -7,21 +7,30 @@ def test_paragraph_minimal():
     Document.model_validate({"blocks": [{"type": "paragraph", "text": "hi"}]})
 
 
-def test_rich_text_requires_two_runs():
-    with pytest.raises(Exception):
-        Document.model_validate({"blocks": [
-            {"type": "rich_text", "runs": [{"text": "lonely"}]}
-        ]})
+def test_rich_text_accepts_single_run():
+    Document.model_validate({"blocks": [
+        {"type": "rich_text", "runs": [{"text": "single italic", "italic": True}]}
+    ]})
     Document.model_validate({"blocks": [
         {"type": "rich_text",
          "runs": [{"text": "a", "bold": True}, {"text": "b"}]}
     ]})
-
-
-def test_drop_cap_first_letter_one_char():
     with pytest.raises(Exception):
         Document.model_validate({"blocks": [
-            {"type": "drop_cap", "first_letter": "AB", "rest": "..."}
+            {"type": "rich_text", "runs": []}
+        ]})
+
+
+def test_drop_cap_first_letter_one_to_three_chars():
+    Document.model_validate({"blocks": [
+        {"type": "drop_cap", "first_letter": "T", "rest": "..."}
+    ]})
+    Document.model_validate({"blocks": [
+        {"type": "drop_cap", "first_letter": "The", "rest": "..."}
+    ]})
+    with pytest.raises(Exception):
+        Document.model_validate({"blocks": [
+            {"type": "drop_cap", "first_letter": "Four", "rest": "..."}
         ]})
 
 
