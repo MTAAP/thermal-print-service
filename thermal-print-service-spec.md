@@ -98,7 +98,8 @@ The renderer is the single source of typographic truth. Every text block, every 
 
 | Role | Font | Notes |
 |---|---|---|
-| Body (paragraph, checklist, kv, bullets, numbered) | **JetBrains Mono Bold 18px** | Vector, rendered through the same supersample + Atkinson path as display text. This prints darker and more legibly than the earlier bitmap-body experiments. ~48 chars/line in 528 px live area. |
+| Prose body (paragraph, bullets, numbered, checklist items, drop_cap.rest, kv keys) | **IBM Plex Sans Medium 18px** | Vector, rendered through the same supersample + Atkinson path as display text. Proportional face — reads 'literary' rather than 'computer-y'. Replaced the JetBrains Mono Bold body in v0.8.0. |
+| Mono body (kv values, table_compact cells, bullet marker glyphs) | **JetBrains Mono Bold 18px** | Same supersample path. Retained where the glyph grid is structural (column alignment, marker visual weight). |
 | Display (header, section_title, large_text, drop_cap, pull_quote) | **IBM Plex Sans Medium / Bold** | Vector. Rendered at 2× target size, then Atkinson-dithered to 1-bit to avoid antialias→threshold muddiness. |
 | Code (code blocks, kv values where monospace alignment matters) | **JetBrains Mono Regular / Bold** | Vector. Same 2×→Atkinson treatment. |
 | CJK fallback | **Noto Sans SC Regular / Bold** | Used for codepoints missing from the primary font. Wrapping is atom-aware: Latin words break at whitespace, non-primary-cmap codepoints can break per character. |
@@ -258,7 +259,7 @@ Each block has a `type` field; remaining fields depend on the type. The `align: 
 | `header` | Title band at top of document | `text`, optional `subtitle`, `style: "inverse_band" \| "ornamental" \| "minimal"` |
 | `section_title` | Mid-document section heading | `text`, optional `style: "underline" \| "inverse" \| "rule_above"` |
 | `paragraph` | Body text, auto-wrapped to width | `text`, optional `emphasis: "italic" \| "bold"` |
-| `rich_text` | Multi-run mixed-emphasis text | `runs: [{text, bold?, italic?, inverse?, underline?, size?}]` (must contain ≥2 runs; use `paragraph` for single emphasis) |
+| `rich_text` | Multi-run mixed-emphasis text | `runs: [{text, bold?, italic?, inverse?, underline?, size?}]` (≥1 run; a single italic run is legitimate. `paragraph` with `emphasis` is still simpler for whole-paragraph emphasis.) |
 | `large_text` | Banner-sized text for posters | `text`, `size: "xl" \| "xxl" \| "xxxl"` |
 | `code` | Monospace block, preserves whitespace | `text` |
 | `pull_quote` | Indented quote with vertical bar | `text`, optional `attribution` |
@@ -546,7 +547,7 @@ The big architectural questions are resolved (see v0.3 decisions and v0.4 change
 
 | Was open in v0.2 | Resolution in v0.3 |
 |---|---|
-| Font choice | Current implementation uses JetBrains Mono Bold body, IBM Plex Sans Medium/Bold display, JetBrains Mono Regular/Bold code, Noto Sans SC fallback, and Spleen ASCII-art bitmap fonts (§4 Rendering pipeline, §10 Stack) |
+| Font choice | Current implementation uses IBM Plex Sans Medium prose body (paragraph/lists/drop_cap.rest/kv keys), JetBrains Mono Bold mono body (kv values/table cells/bullet markers), IBM Plex Sans Medium/Bold display, JetBrains Mono Regular/Bold code, Noto Sans SC fallback, and Spleen ASCII-art bitmap fonts (§4 Rendering pipeline, §10 Stack) |
 | Codepage fallback vs render-as-image | Always render as image. Pi owns typography end-to-end (§4 Rendering pipeline) |
 | Header `inverse_band` style + global body grid | 528 px live area inside 24 px gutters; band is margin-aligned. Edge-to-edge bleed reserved for explicit opt-in (§4 Rendering pipeline) |
 | Schema versioning aggressiveness | Single living schema, no version pin header, structured 400 with `valid_values` + `migration_hint`, `SCHEMA_CHANGELOG.md` (§5, §6 Schema evolution) |

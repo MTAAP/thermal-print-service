@@ -10,6 +10,10 @@ from printer.render.blocks import register
 
 @register("rule")
 def render_rule(block, ctx) -> Image.Image:
+    # All five styles now stroke at width=2 for consistent visual weight on
+    # the thermal head — width=1 dashed/dotted/double/wave rules were nearly
+    # invisible compared to solid. Wave rule uses thicker dot stamping for
+    # the same reason.
     h = 8
     canvas = Image.new("1", (LIVE_WIDTH_PX, h), 1)
     d = ImageDraw.Draw(canvas)
@@ -20,16 +24,19 @@ def render_rule(block, ctx) -> Image.Image:
         for x in range(0, LIVE_WIDTH_PX, 12):
             d.line([(x, y), (x + 8, y)], fill=0, width=2)
     elif block.style == "dotted":
-        for x in range(0, LIVE_WIDTH_PX, 6):
-            d.ellipse([x, y - 1, x + 2, y + 1], fill=0)
+        # Larger circles at wider spacing — width=1 ellipses read as smudges.
+        for x in range(0, LIVE_WIDTH_PX, 10):
+            d.ellipse([x, y - 2, x + 4, y + 2], fill=0)
     elif block.style == "double":
-        d.line([(0, y - 2), (LIVE_WIDTH_PX - 1, y - 2)], fill=0, width=1)
-        d.line([(0, y + 2), (LIVE_WIDTH_PX - 1, y + 2)], fill=0, width=1)
+        # Two parallel rules at width=2 each, gap=3 px between centers, so
+        # the pair reads as a deliberate "double" rather than a fuzzy single.
+        d.line([(0, y - 3), (LIVE_WIDTH_PX - 1, y - 3)], fill=0, width=2)
+        d.line([(0, y + 3), (LIVE_WIDTH_PX - 1, y + 3)], fill=0, width=2)
     elif block.style == "wave":
         prev = (0, y)
         for x in range(0, LIVE_WIDTH_PX):
             ny = y + int(2 * math.sin(x / 6))
-            d.line([prev, (x, ny)], fill=0, width=1)
+            d.line([prev, (x, ny)], fill=0, width=2)
             prev = (x, ny)
     return canvas
 

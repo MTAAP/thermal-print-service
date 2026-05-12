@@ -3,6 +3,89 @@
 Each removal/rename gets a one-line entry with the renderer version it landed in
 and the migration hint surfaced in 400 responses.
 
+## v0.8.0
+
+Audit-fixes pass — schema additions, loosened floors, renderer changes for
+previously dead enums, and a body-font swap. No removals or renames; all
+existing inputs continue to parse.
+
+**Schema additions / loosening (backwards-compatible):**
+
+- **`CodeBlock.size`** — new enum `sm | md | lg`, default `md` (16 px). `sm`
+  is 14 px (the prior fixed size), `lg` is 18 px. Migration: omit `size` to
+  get the new thermal-safe default; existing payloads without `size` now
+  render at 16 px instead of 14 px.
+- **`ImageBlock.caption`** — new optional field (max 120 chars). Renders
+  centered below the image; mirrors `QrBlock.caption`. Previously composing
+  an image with a caption required a second `paragraph` block.
+- **`OrnamentBlock.pattern`** — three patterns added: `waves`, `art_deco`,
+  `minimal_dots`. Existing patterns (`stars`, `diamonds`, `leaves`,
+  `geometric`) keep their names; the glyphs they render are now Unicode
+  dingbats at display weight rather than ASCII tiles at body size.
+- **`DropCapBlock.first_letter`** — max_length raised 1 → 3 to accept
+  literary incipits like `"The"` and `"In"`. Single-char drop caps still work.
+- **`RichTextBlock.runs`** — min_length lowered 2 → 1 so a single italic or
+  inverse run is valid. Previously a one-run intent had to fall back to
+  `paragraph` with `emphasis`.
+
+**Schema field descriptions (new):**
+
+Every styled / enum field now carries a `description=` that lands in the
+JSON Schema delivered to the MCP tool catalog: `header.style`,
+`header.subtitle`, `section_title.style`, `paragraph.emphasis`,
+`rich_text.size`, `large_text.size`, `code.size`, `pull_quote.attribution`,
+`drop_cap.first_letter`, `bullets.marker`, `rule.style`, `ornament.pattern`,
+`spacer.lines`, `gradient_band.direction`, `progress_bar.label`,
+`sparkline.label`, `qr.size`, `qr.caption`, `barcode.format`, `image.dither`,
+`image.bleed`, `image.caption`, `ascii_art.font`, `tear_here.label`,
+`feed.lines`, and `kv.{key,value}`. No behavior change — purely
+agent-discoverability.
+
+**Renderer changes (the schema was honest already, the renderer caught up):**
+
+- **`header.subtitle`**, **`header.ornamental`**, **`header.minimal`** were
+  previously silent no-ops (schema accepted, renderer ignored). Now distinct:
+  `inverse_band` (default) keeps the loud white-on-black band; `ornamental`
+  flanks the title with ◆ glyphs at display weight; `minimal` puts the title
+  above a hairline rule. `subtitle` renders below the title in display medium.
+- **`section_title.inverse`** and **`section_title.rule_above`** were
+  similarly silent. Now `inverse` paints a section-weight band and
+  `rule_above` puts a hairline rule above the title.
+- **`qr.caption`** was accepted into the schema and silently dropped; now
+  renders centered below the QR.
+- **`rich_text` size `sm` 12 → 14 px** and **`pull_quote.attribution` 12 →
+  14 px**, matching the existing thermal-safe stroke floor (the same one
+  that bumped footer 14 → 16 in earlier work).
+- **`spacer.lines`** unit corrected: was 14 px per line (below body
+  line-height), now `BODY_LINE_H` (26 px) so "1 line" matches one line of
+  body. `feed.lines` stays at 14 px — `feed` is paper-feed-line semantic,
+  distinct from in-document whitespace.
+- **`progress_bar` / `sparkline` / `tear_here` labels** were drawn via raw
+  `d.text()` at the body font, causing collision with the bar/dashes.
+  Labels now render via `render_body_line` (supersampled) with a full
+  body-line-height label band reserved above.
+- **`rule` widths normalized to 2 px** across all five styles. Prior
+  width-1 dashed/dotted/double/wave rules were nearly invisible compared
+  to width-2 `solid`.
+
+**Body font swap (visual change, no schema impact):**
+
+Prose blocks (`paragraph`, `bullets`, `numbered`, `checklist`,
+`drop_cap.rest`, `kv` keys) switch from JetBrains Mono Bold 18 to **IBM
+Plex Sans Medium 18**, supersampled through the same Atkinson path.
+Long-form documents (briefings, scrolls, recipe cards) now read 'literary'
+rather than 'computer-y'. Monospace is retained where the glyph grid is
+structural: `code`, `kv` values, `table_compact` cells, and bullet marker
+glyphs.
+
+`kv` is now a two-font split: prose keys (proportional) + mono values.
+Within each row both cells are bottom-aligned within `BODY_LINE_H` so the
+two faces share an apparent baseline despite different bbox metrics.
+
+The constant `BODY_GLYPH_PX = 11` is removed (no callers — proportional
+prose has no uniform glyph width; the only consumer, `numbered` prefix
+column width, now measures the actual rendered prefix).
+
 ## v0.1.0 (initial)
 
 - Initial schema landed; 27 block types declared, 13 rendered (Phase 3 minimum).

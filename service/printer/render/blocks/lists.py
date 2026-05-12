@@ -44,7 +44,9 @@ def render_kv(block, ctx) -> Image.Image:
     Keys read as labels — proportional Plex Sans Medium gives them
     'literary' weight. Values are data (versions, paths, hashes) and
     stay in JetBrains Mono Bold for column alignment and predictable
-    glyph width.
+    glyph width. Prose and mono have different bbox-tight heights at the
+    same target size, so each cell is bottom-aligned within its row band
+    (BODY_LINE_H) so the two faces share an apparent baseline.
     """
     key_col_w = 200
     key_text_w = key_col_w - 8
@@ -70,12 +72,16 @@ def render_kv(block, ctx) -> Image.Image:
                 key_img = render_prose_line(
                     key_lines[li], fonts=ctx.fonts, max_width_px=key_text_w,
                 )
-                canvas.paste(key_img, (0, row_y))
+                # Bottom-align within the row band so the prose key shares a
+                # baseline with the (taller) mono value on the same row.
+                canvas.paste(key_img, (0, row_y + (BODY_LINE_H - key_img.height)))
             if li < len(value_lines):
                 val_img = render_body_line(
                     value_lines[li], fonts=ctx.fonts, max_width_px=value_text_w,
                 )
-                canvas.paste(val_img, (key_col_w, row_y))
+                canvas.paste(
+                    val_img, (key_col_w, row_y + (BODY_LINE_H - val_img.height)),
+                )
         y += BODY_LINE_H * rows
     return canvas
 
