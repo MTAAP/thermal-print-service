@@ -1,6 +1,5 @@
 from printer.render.blocks import renderer_for
 from printer.render.renderer import RenderContext
-from printer.schema.document import Document
 
 
 def _ctx(fonts):
