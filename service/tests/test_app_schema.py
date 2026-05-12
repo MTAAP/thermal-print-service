@@ -16,7 +16,7 @@ async def test_schema_returns_renderer_version_and_block_types(fake_deps):
     assert "header" in body["block_types"]
     assert "qr" in body["block_types"]
     assert "ascii_art" in body["block_types"]
-    # All 27 block types declared
-    assert len(body["block_types"]) == 27
+    # All 34 block types declared
+    assert len(body["block_types"]) == 34
     # The pydantic JSON schema is included
     assert "blocks" in body

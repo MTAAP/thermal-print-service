@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 # ----- align allow-list (spec §6) -----
 ALIGN_ALLOWED: set[str] = {
@@ -156,6 +156,107 @@ class FooterBlock(_AlignableBlock):
     text: str = Field(
         min_length=1, max_length=200,
         description="Footer line, centered, in display bold.",
+    )
+
+
+# ===== Literary frame =====
+
+
+class EpigraphBlock(_Block):
+    type: Literal["epigraph"]
+    text: str = Field(
+        min_length=1, max_length=2000,
+        description=(
+            "Short quoted opening (chapter epigraph or piece opener). "
+            "Quieter than pull_quote: italic, indented both sides, no bar."
+        ),
+    )
+    attribution: str | None = Field(
+        default=None, max_length=200,
+        description=(
+            "Optional source. Rendered right-aligned beneath the text in "
+            "italic 13 px with an em-dash prefix."
+        ),
+    )
+
+
+class BylineBlock(_Block):
+    type: Literal["byline"]
+    text: str = Field(
+        min_length=1, max_length=100,
+        description=(
+            "Author credit rendered in italic 14 px. Agent decides "
+            "wording ('Tim Kraus' / 'by Tim Kraus' / 'T. Kraus')."
+        ),
+    )
+
+
+class DatelineBlock(_Block):
+    type: Literal["dateline"]
+    location: str = Field(
+        min_length=1, max_length=60,
+        description="Place name. Uppercased at render time.",
+    )
+    date: str = Field(
+        min_length=1, max_length=60,
+        description=(
+            "Date string. Format is the agent's choice "
+            "('May 12' / 'May 12, 2026' / '5/12/26'); renderer "
+            "uppercases the result."
+        ),
+    )
+
+
+class SalutationBlock(_Block):
+    type: Literal["salutation"]
+    text: str = Field(
+        min_length=1, max_length=120,
+        description=(
+            "Opening salutation for correspondence ('Dear Sam,'). "
+            "Rendered at body size with extra breathing room below."
+        ),
+    )
+
+
+class SignatureBlock(_Block):
+    type: Literal["signature"]
+    name: str = Field(
+        min_length=1, max_length=80,
+        description=(
+            "Signer's name. Rendered italic 18 px right-aligned with "
+            "an em-dash prefix."
+        ),
+    )
+    closing: str | None = Field(
+        default=None, max_length=80,
+        description=(
+            "Optional closing line ('Yours,' / 'Warmly,'). Rendered on "
+            "its own line above the name, also right-aligned italic."
+        ),
+    )
+
+
+class ColophonBlock(_Block):
+    type: Literal["colophon"]
+    text: str = Field(
+        min_length=1, max_length=500,
+        description=(
+            "End-matter production note. Italic 14 px centered in a "
+            "narrow column."
+        ),
+    )
+
+
+class AddressBlock(_Block):
+    type: Literal["address"]
+    lines: list[
+        Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    ] = Field(
+        min_length=1, max_length=8,
+        description=(
+            "1 to 8 lines, order preserved, rendered tightly (~22 px "
+            "per line) in 16 px Plex Medium left-aligned."
+        ),
     )
 
 
@@ -429,6 +530,8 @@ class FeedBlock(_Block):
 AnyBlock = (
     HeaderBlock | SectionTitleBlock | ParagraphBlock | RichTextBlock
     | LargeTextBlock | CodeBlock | PullQuoteBlock | DropCapBlock | FooterBlock
+    | EpigraphBlock | BylineBlock | DatelineBlock | SalutationBlock
+    | SignatureBlock | ColophonBlock | AddressBlock
     | ChecklistBlock | BulletsBlock | NumberedBlock | KvBlock | TableCompactBlock
     | RuleBlock | OrnamentBlock | SpacerBlock | GradientBandBlock
     | ProgressBarBlock | SparklineBlock
@@ -440,7 +543,10 @@ AnyBlock = (
 def block_type_names() -> list[str]:
     return [
         "header", "section_title", "paragraph", "rich_text", "large_text", "code",
-        "pull_quote", "drop_cap", "footer", "checklist", "bullets", "numbered",
+        "pull_quote", "drop_cap", "footer",
+        "epigraph", "byline", "dateline", "salutation",
+        "signature", "colophon", "address",
+        "checklist", "bullets", "numbered",
         "kv", "table_compact", "rule", "ornament", "spacer", "gradient_band",
         "progress_bar", "sparkline", "qr", "barcode", "image", "ascii_art",
         "tear_here", "cut", "feed",
