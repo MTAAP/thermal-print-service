@@ -251,7 +251,7 @@ class OrnamentBlock(_Block):
         default="stars",
         description=(
             "Decorative band. stars (★), diamonds (◆), leaves (❀), "
-            "geometric (▰▱), waves (～), art_deco (▰▱▰▱), "
+            "geometric (■□), waves (～), art_deco (◆◇), "
             "minimal_dots (· · ·). Use sparingly — one ornament per print."
         ),
     )

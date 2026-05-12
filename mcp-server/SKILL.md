@@ -17,6 +17,30 @@ Print when the output is **better as paper than as a chat message**:
 
 Don't print as a default. Most chat answers are not improved by paper.
 
+## Sizes at a glance
+
+The defaults are the right pick 80 % of the time. Reach for the extremes only when the print is **the** thing on the page.
+
+| Field | sm | md (default) | lg | xl | xxl | xxxl |
+|---|---|---|---|---|---|---|
+| `rich_text.size` | 14 px / ~1.75 mm | 18 px / ~2.25 mm | 28 px / ~3.5 mm | — | — | — |
+| `large_text.size` | — | — | — | 48 px / 6 mm sub-banner | 80 px / 10 mm banner | 128 px / 16 mm huge banner |
+| `qr.size` | 192 px / 24 mm inline | 320 px / 40 mm | 480 px / 60 mm prominent | — | — | — |
+| `code.size` | 14 px compact | 16 px thermal-safe | 18 px emphasized | — | — | — |
+
+`spacer.lines` is in body line-heights (1 line ≈ 3.25 mm). `feed.lines` is in paper-feed lines (~1.75 mm each) — use `feed` for pre-cut paper-feed control, `spacer` for in-document whitespace.
+
+## Style guide — picking treatments
+
+- **`header.style`**: `inverse_band` (default) is loud — use for date headers, "Sam called", "RECEIPT". `ornamental` flanks the title with ◆ glyphs — formal, literary. `minimal` puts the title above a hairline rule — understated, modern. `header.subtitle` adds a secondary line below the title in display medium.
+- **`section_title.style`**: `underline` (default) is neutral. `inverse` paints a section-weight white-on-black band — call out a critical section. `rule_above` gives a "chapter break" feel — good for long-form readers.
+- **`rule.style`**: `solid` (2 px, default) is the all-rounder. `dashed` reads as a perforation hint. `dotted` is the quietest. `double` is for "important" breaks. `wave` is decorative.
+- **`ornament.pattern`**: `stars` (★), `diamonds` (◆), `leaves` (❀), `geometric` (■□), `waves` (～), `art_deco` (◆◇), `minimal_dots` (· · ·). Use sparingly — one ornament per print, not three. Seasoning, not the dish.
+- **`paragraph.emphasis`**: whole-paragraph italic/bold. For mixed emphasis inside one block, reach for `rich_text`.
+- **`pull_quote`**: use `attribution` for sourced quotes; leave it off for prose lifts.
+- **Captions**: `qr.caption` and `image.caption` render centered below the visual. Use for short labels ("scan for menu", "1998, Lisbon"), not paragraphs.
+- **Bullets vs numbered vs checklist**: `bullets` for unordered prose, `numbered` for sequenced steps, `checklist` for things meant to be ticked off on paper.
+
 ## What to print
 
 The printer is a **general-purpose physical notification surface**. The medium is 80mm wide thermal paper, one column, top-down. The substrate is content-agnostic — you decide what goes on it.
@@ -119,6 +143,24 @@ A banner:
       {"type": "large_text", "text": "WELCOME HOME", "size": "xxxl", "align": "center"},
       {"type": "ornament", "pattern": "stars"},
       {"type": "spacer", "lines": 3}
+    ]
+  }
+}
+```
+
+A literary scroll:
+
+```json
+{
+  "document": {
+    "document_type": "scroll",
+    "blocks": [
+      {"type": "header", "text": "Field Notes", "subtitle": "vol. III · spring", "style": "ornamental"},
+      {"type": "rule", "style": "double"},
+      {"type": "drop_cap", "first_letter": "The", "rest": "morning fog refused to lift, even past nine. We took the lower path and watched the gulls patrol the breakwater for nearly an hour."},
+      {"type": "pull_quote", "text": "It is the constraint of paper, not the screen, that makes the words slow down.", "attribution": "field notebook"},
+      {"type": "ornament", "pattern": "minimal_dots"},
+      {"type": "footer", "text": "rolled and tied with twine"}
     ]
   }
 }

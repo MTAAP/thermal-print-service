@@ -54,16 +54,22 @@ def render_ornament(block, ctx) -> Image.Image:
         "stars": "★ ",
         "diamonds": "◆ ",
         "leaves": "❀ ",
-        "geometric": "▰▱ ",
+        # Alternating filled / hollow squares — strong "geometric" feel that
+        # tiles cleanly. ▰▱ would have been a closer match but BLACK
+        # PARALLELOGRAM (U+25B0) isn't covered by any bundled font.
+        "geometric": "■□ ",
         "waves": "～",
-        "art_deco": "▰▱▰▱ ",
+        # Alternating filled / hollow diamond run — the angular zigzag reads
+        # as art-deco at receipt sizes. Distinct from `diamonds` (which is
+        # solid ◆ alone).
+        "art_deco": "◆◇ ",
         "minimal_dots": "·  ",
     }
     token = tokens[block.pattern]
     size_px = 22
     font = ctx.fonts.display(weight="bold", size_px=size_px)
-    # The IBM Plex display face does not cover dingbats (★ ◆ ❀ ▰▱ ～ ·) —
-    # they all resolve to the same .notdef tofu glyph and the patterns
+    # The IBM Plex display face does not cover most dingbats (★ ◆ ❀ ■□ ～
+    # ◆◇) — they all resolve to .notdef tofu glyphs and the patterns
     # collapse to identical renders. Noto Sans SC (the CJK fallback) covers
     # the full set, so route through the same per-glyph fallback path used
     # by render_body_line.

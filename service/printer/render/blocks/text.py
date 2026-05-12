@@ -91,7 +91,8 @@ def _render_header_inverse_band(*, title, subtitle_img, align, band_h, bottom_pa
 def _render_header_ornamental(*, title, subtitle_img, align, ctx, bottom_pad):
     """Title flanked by ◆ glyphs at display weight. The composition is
     centered regardless of ``align`` — ornamental decoration implies symmetry.
-    Subtitle (if any) renders below the title row.
+    Subtitle (if any) renders below the title row. ``◆`` lives in the CJK
+    fallback's range, not in Plex Sans, so the fallback is supplied.
     """
     top_pad = 8
     ornament_glyph = "◆"
@@ -100,7 +101,7 @@ def _render_header_ornamental(*, title, subtitle_img, align, ctx, bottom_pad):
     orn = supersample_render(
         text=ornament_glyph,
         font=ornament_font,
-        fallback_font=None,
+        fallback_font=_cjk_fallback(ctx, bold=True),
         target_size_px=orn_size_px, max_width_px=LIVE_WIDTH_PX,
     )
     gap = 12
