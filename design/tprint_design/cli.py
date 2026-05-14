@@ -12,6 +12,7 @@ import sys
 from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from printer_core.constants import (
     DPMM,
@@ -19,6 +20,9 @@ from printer_core.constants import (
     MAX_LENGTH_MM_DEFAULT,
     PRINT_HEAD_WIDTH_PX,
 )
+
+if TYPE_CHECKING:
+    import httpx
 
 
 def _load_guidelines_md() -> str:
@@ -55,6 +59,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_lint.add_argument("path", type=Path)
     p_lint.add_argument("--out", type=Path, default=None,
                         help="Write lint JSON to this path")
+
+    p_print = sub.add_parser("print", help="Compile and send to the Pi")
+    p_print.add_argument("path", type=Path)
+    p_print.add_argument("--idempotency-key", default=None)
+    p_print.add_argument("--dry-run", action="store_true",
+                         help="Validate at the Pi without printing")
+    p_print.add_argument("--max-length-mm", type=int, default=None)
 
     return p
 
@@ -145,9 +156,65 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     return 0 if rpt.ok else 1
 
 
+def _http_client(url: str) -> httpx.Client:
+    import httpx
+    return httpx.Client(base_url=url, timeout=10.0)
+
+
+def _cmd_print(args: argparse.Namespace) -> int:
+    import os
+
+    from PIL import Image
+
+    from tprint_design.client import PrintClientError, post_print_raw
+    from tprint_design.compile import compile_html
+    from tprint_design.lint import lint_html_text
+
+    base_url = os.environ.get("PRINT_SERVICE_URL")
+    if not base_url:
+        print("PRINT_SERVICE_URL is unset", file=sys.stderr)
+        return 2
+
+    try:
+        result = compile_html(args.path)
+    except Exception as exc:
+        print(f"render error: {exc}", file=sys.stderr)
+        return 2
+
+    rgb = Image.open(result.rgb_path)
+    one_bit = Image.open(result.out_path)
+    rpt = lint_html_text(
+        args.path.read_text(),
+        rendered_rgb=rgb, rendered_one_bit=one_bit,
+        render_ms=result.render_ms,
+        blocked_external_requests=result.blocked_external_requests,
+        max_length_mm_flag=args.max_length_mm,
+    )
+    if not rpt.ok:
+        for f in rpt.errors:
+            print(f"  ERROR  [{f.rule}] {f.message}", file=sys.stderr)
+        print("refusing to print: lint errors above", file=sys.stderr)
+        return 1
+
+    png_bytes = result.out_path.read_bytes()
+    with _http_client(base_url) as client:
+        try:
+            response = post_print_raw(
+                client, png_bytes,
+                idempotency_key=args.idempotency_key,
+                dry_run=args.dry_run,
+            )
+        except PrintClientError as exc:
+            print(f"pi rejected the print: {exc}", file=sys.stderr)
+            return 2
+    print(json.dumps(response, indent=2))
+    return 0
+
+
 _DISPATCH = {
     "info": _cmd_info, "init": _cmd_init,
     "compile": _cmd_compile, "lint": _cmd_lint,
+    "print": _cmd_print,
 }
 
 
