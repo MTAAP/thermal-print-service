@@ -15,6 +15,8 @@ Tailnet-attached thermal receipt printer. JSON-in, paper-out HTTP service runnin
 |---|---|
 | `service/` | FastAPI service that runs on the Pi. Owns rendering, queueing, durability. `printer-svc` CLI entry point. |
 | `mcp-server/` | MCP adapter wrapping the HTTP API as agent tools (Claude Code, Claude Desktop, Codex CLI, OpenClaw). |
+| `design/` | Local CLI (`tprint-design`) compiling HTML+CSS into thermal-ready 1-bit PNGs. Runs on the user's laptop via Playwright + headless Chromium. Sends final PNG to the Pi via `/print/raw`. See [`design/SKILL.md`](design/SKILL.md). |
+| `printer-core/` | Shared library: Atkinson dither + thermal constants used by both `service/` and `design/`. |
 | `deploy/` | Idempotent Pi provisioning (`install.sh`), laptop → Pi sync (`sync.sh`), Tailscale HTTPS (`tailscale-serve.sh`), systemd unit. |
 | `assets/fonts/` | Bundled font stack: IBM Plex Sans, JetBrains Mono, Noto Sans SC, Spleen. Loaded by `FontRegistry` via `assets/fonts/` (paths resolved from repo root in tests via `REPO_ROOT`). |
 | `assets/test-pages/test-page.json` | Document used by `POST /test` and the literary-frame regression. |
@@ -22,19 +24,23 @@ Tailnet-attached thermal receipt printer. JSON-in, paper-out HTTP service runnin
 `service/printer/` packages:
 `schema/` (pydantic models) → `render/` (PIL pipeline, `blocks/`, `typography`, `dither`) → `queue/` (durable joblog, idempotency, PNG cache, worker) → `transport/` (python-escpos over `/dev/usb/lp0`). `app.py` wires them into FastAPI; `cli/main.py` exposes `run`, `calibrate`, `test-print`.
 
-## Two venvs — important
+## Four venvs — important
 
-The repo has **two separate Python packages**, each with its own `pyproject.toml` and `.venv`:
+The repo has **four separate Python packages**, each with its own `pyproject.toml` and `.venv`:
 
-- `service/.venv/` — installs `service/`
+- `printer-core/.venv/` — installs `printer-core/` (shared dither + constants)
+- `service/.venv/` — installs `service/` (depends on `printer-core` editable)
 - `mcp-server/.venv/` — installs `mcp-server/`
+- `design/.venv/` — installs `design/` (depends on `printer-core` editable; pulls Playwright + Chromium)
 
-The top-level `Makefile` targets both. Don't install one package's deps into the other's venv.
+The top-level `Makefile` targets all four. Don't install one package's deps into the other's venv.
 
 ```bash
 # First-time setup
-python3 -m venv service/.venv && service/.venv/bin/pip install -e 'service[dev]'
+python3 -m venv printer-core/.venv && printer-core/.venv/bin/pip install -e 'printer-core[dev]'
+python3 -m venv service/.venv && service/.venv/bin/pip install -e ./printer-core && service/.venv/bin/pip install -e 'service[dev]'
 python3 -m venv mcp-server/.venv && mcp-server/.venv/bin/pip install -e 'mcp-server[dev]'
+python3 -m venv design/.venv && design/.venv/bin/pip install -e ./printer-core && design/.venv/bin/pip install -e 'design[dev]' && design/.venv/bin/playwright install chromium
 ```
 
 ## Commands
