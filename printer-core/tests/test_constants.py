@@ -9,7 +9,7 @@ from printer_core.constants import (
 )
 
 
-def test_geometry_constants_match_thermal_print_service():
+def test_geometry_constants_are_pinned():
     assert PRINT_HEAD_WIDTH_PX == 576
     assert GUTTER_PX == 24
     assert LIVE_WIDTH_PX == 528
