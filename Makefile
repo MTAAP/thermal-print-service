@@ -1,15 +1,25 @@
-.PHONY: verify test lint typecheck service-test mcp-test service-lint mcp-lint service-typecheck mcp-typecheck
+.PHONY: verify test lint typecheck core-test core-lint core-typecheck service-test mcp-test service-lint mcp-lint service-typecheck mcp-typecheck
 
+CORE_PY ?= printer-core/.venv/bin/python
 SERVICE_PY ?= service/.venv/bin/python
 MCP_PY ?= mcp-server/.venv/bin/python
 
 verify: test lint typecheck
 
-test: service-test mcp-test
+test: core-test service-test mcp-test
 
-lint: service-lint mcp-lint
+lint: core-lint service-lint mcp-lint
 
-typecheck: service-typecheck mcp-typecheck
+typecheck: core-typecheck service-typecheck mcp-typecheck
+
+core-test:
+	$(CORE_PY) -m pytest printer-core/tests
+
+core-lint:
+	$(CORE_PY) -m ruff check printer-core/printer_core printer-core/tests
+
+core-typecheck:
+	$(CORE_PY) -m mypy printer-core/printer_core
 
 service-test:
 	$(SERVICE_PY) -m pytest service/tests
