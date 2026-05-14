@@ -41,6 +41,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--force", action="store_true",
                         help="Overwrite existing file")
 
+    p_compile = sub.add_parser("compile", help="Render HTML to thermal PNG")
+    p_compile.add_argument("path", type=Path, help="Source .html file")
+    p_compile.add_argument("--out", type=Path, default=None,
+                           help="Override output PNG path")
+    p_compile.add_argument("--no-lint", action="store_true",
+                           help="Skip lint pass; exit 0 on render success")
+    p_compile.add_argument("--max-length-mm", type=int, default=None,
+                           help="Override Pi max_length_mm for lint")
+    p_compile.add_argument("--width", type=int, default=576)
+
     return p
 
 
@@ -74,7 +84,50 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-_DISPATCH = {"info": _cmd_info, "init": _cmd_init}
+def _cmd_compile(args: argparse.Namespace) -> int:
+    from PIL import Image
+
+    from tprint_design.compile import compile_html
+    from tprint_design.lint import lint_html_text
+
+    try:
+        result = compile_html(args.path, out_path=args.out, width=args.width)
+    except Exception as exc:
+        print(f"render error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.no_lint:
+        print(f"compiled {result.out_path} ({result.rendered_height_px} px)")
+        return 0
+
+    rgb = Image.open(result.rgb_path)
+    one_bit = Image.open(result.out_path)
+    rpt = lint_html_text(
+        args.path.read_text(),
+        rendered_rgb=rgb, rendered_one_bit=one_bit,
+        render_ms=result.render_ms,
+        blocked_external_requests=result.blocked_external_requests,
+        max_length_mm_flag=args.max_length_mm,
+    )
+    lint_path = result.out_path.with_suffix(".lint.json")
+    lint_path.write_text(json.dumps(rpt.to_dict(), indent=2))
+
+    _print_lint_summary(rpt, result)
+    return 0 if rpt.ok else 1
+
+
+def _print_lint_summary(rpt, result) -> None:
+    print(f"compiled {result.out_path} "
+          f"({result.rendered_height_px} px, "
+          f"~{result.estimated_paper_mm:.0f} mm of paper, "
+          f"ink ratio {result.ink_pixel_ratio:.0%})")
+    for f in rpt.errors:
+        print(f"  ERROR  [{f.rule}] {f.message}")
+    for w in rpt.warnings:
+        print(f"  warn   [{w.rule}] {w.message}")
+
+
+_DISPATCH = {"info": _cmd_info, "init": _cmd_init, "compile": _cmd_compile}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
