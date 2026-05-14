@@ -10,3 +10,6 @@ mcp-server/build/
 .ruff_cache/
 .mypy_cache/
 service/tests/.golden-out/
+.claude.local.md
+.claude/settings.local.json
+docs/superpowers/
