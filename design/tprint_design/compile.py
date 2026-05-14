@@ -85,28 +85,41 @@ def compile_html(
 
 
 def _trim_trailing_white(img: Image.Image) -> Image.Image:
-    """Drop trailing all-white rows until 16 consecutive ink-bearing
-    rows are seen from the bottom up. Floor at 80 px image height."""
+    """Drop trailing all-white rows. Floor at 80 px image height.
+
+    Strategy: walk bottom-up looking for a run of `_TRIM_LOOKBACK_ROWS`
+    consecutive ink-bearing rows. The bottom-most row of that run is the
+    last legitimate content; crop just below it. The lookback guards
+    against stray dither pixels in the trailing whitespace producing a
+    too-tall result. If no such run exists (very short content), fall
+    back to the bottom-most ink row.
+    """
     if img.mode != "1":
         img = img.convert("1")
     width, height = img.size
     if height <= _TRIM_FLOOR_PX:
         return img
-    # mode "1" pixel access returns 0 (black) or 255 (white).
     px = img.load()
     assert px is not None
+
     consecutive_ink = 0
-    last_ink_row = height - 1
+    last_meaningful_row = -1
     for y in range(height - 1, -1, -1):
-        row_has_ink = any(px[x, y] == 0 for x in range(width))  # type: ignore[arg-type]
-        if row_has_ink:
+        if any(px[x, y] == 0 for x in range(width)):  # type: ignore[arg-type]
             consecutive_ink += 1
-            last_ink_row = y
-            if consecutive_ink >= _TRIM_LOOKBACK_ROWS:
+            if consecutive_ink == _TRIM_LOOKBACK_ROWS:
+                last_meaningful_row = y + (_TRIM_LOOKBACK_ROWS - 1)
                 break
         else:
             consecutive_ink = 0
-    new_height = max(last_ink_row + 1, _TRIM_FLOOR_PX)
+
+    if last_meaningful_row < 0:
+        for y in range(height - 1, -1, -1):
+            if any(px[x, y] == 0 for x in range(width)):  # type: ignore[arg-type]
+                last_meaningful_row = y
+                break
+
+    new_height = max(last_meaningful_row + 1, _TRIM_FLOOR_PX)
     if new_height >= height:
         return img
     return img.crop((0, 0, width, new_height))

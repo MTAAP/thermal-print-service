@@ -57,3 +57,34 @@ def test_compile_result_exposes_stats(tmp_path):
     assert result.estimated_paper_mm == result.rendered_height_px / 8.0
     assert 0.0 <= result.ink_pixel_ratio <= 1.0
     assert result.render_ms > 0
+
+
+@pytest.mark.slow
+def test_compile_does_not_truncate_content_with_internal_dense_run(tmp_path):
+    """Regression: a body with content extending past row 80 must not be
+    truncated to the floor when an earlier dense run of ink rows happens
+    to satisfy the lookback condition."""
+    html = (
+        "<!doctype html><html><head><style>"
+        "body { padding: 0 24px; font-family: monospace; }"
+        "h1 { font-size: 18px; margin: 0; }"
+        "pre { font-size: 14px; line-height: 1.0; margin: 0; }"
+        "</style></head><body>"
+        "<h1>HEADER</h1>"
+        "<pre>line 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
+        "line 7\nline 8\nline 9\nline 10</pre>"
+        "</body></html>"
+    )
+    src = tmp_path / "long.html"
+    src.write_text(html)
+    out = tmp_path / "long.png"
+    compile_html(src, out_path=out)
+    img = Image.open(out)
+    # Header (~18 px) + 10 lines of mono @ 14 px ≈ 158 px of content.
+    # The trim must preserve more than the 80-px floor — the bottom of
+    # the rendered content must survive.
+    assert img.height > 100, (
+        f"trim truncated content; height={img.height} px (expected > 100). "
+        "If this fails, _trim_trailing_white is breaking inside a content "
+        "region instead of at the trailing-whitespace boundary."
+    )
