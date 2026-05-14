@@ -8,6 +8,8 @@ mcp-server/*.egg-info/
 mcp-server/build/
 printer-core/*.egg-info/
 printer-core/build/
+design/*.egg-info/
+design/build/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
