@@ -12,7 +12,7 @@ dependencies = [
   "qrcode[pil]>=8.0",
   "python-barcode>=0.15",
   "fonttools>=4.50",
-  "printer-core",
+  "printer-core",  # editable sibling: pip install -e ../printer-core (not on PyPI)
 ]
 
 [project.optional-dependencies]
