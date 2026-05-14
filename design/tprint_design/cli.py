@@ -67,6 +67,9 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="Validate at the Pi without printing")
     p_print.add_argument("--max-length-mm", type=int, default=None)
 
+    p_preview = sub.add_parser("preview", help="Compile + open in OS viewer")
+    p_preview.add_argument("path", type=Path)
+
     return p
 
 
@@ -211,10 +214,33 @@ def _cmd_print(args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_default(path: Path) -> None:
+    import platform
+    import subprocess
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.run(["open", str(path)], check=False)
+    elif system == "Linux":
+        subprocess.run(["xdg-open", str(path)], check=False)
+    elif system == "Windows":
+        subprocess.run(["explorer", str(path)], check=False)
+
+
+def _cmd_preview(args: argparse.Namespace) -> int:
+    from tprint_design.compile import compile_html
+    try:
+        result = compile_html(args.path)
+    except Exception as exc:
+        print(f"render error: {exc}", file=sys.stderr)
+        return 2
+    _open_default(result.out_path)
+    return 0
+
+
 _DISPATCH = {
     "info": _cmd_info, "init": _cmd_init,
     "compile": _cmd_compile, "lint": _cmd_lint,
-    "print": _cmd_print,
+    "print": _cmd_print, "preview": _cmd_preview,
 }
 
 
