@@ -12,6 +12,7 @@ dependencies = [
   "qrcode[pil]>=8.0",
   "python-barcode>=0.15",
   "fonttools>=4.50",
+  "printer-core",
 ]
 
 [project.optional-dependencies]
