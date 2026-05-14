@@ -51,6 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
                            help="Override Pi max_length_mm for lint")
     p_compile.add_argument("--width", type=int, default=576)
 
+    p_lint = sub.add_parser("lint", help="Pre-render lint only (fast)")
+    p_lint.add_argument("path", type=Path)
+    p_lint.add_argument("--out", type=Path, default=None,
+                        help="Write lint JSON to this path")
+
     return p
 
 
@@ -127,7 +132,23 @@ def _print_lint_summary(rpt, result) -> None:
         print(f"  warn   [{w.rule}] {w.message}")
 
 
-_DISPATCH = {"info": _cmd_info, "init": _cmd_init, "compile": _cmd_compile}
+def _cmd_lint(args: argparse.Namespace) -> int:
+    from tprint_design.lint import lint_html_file
+
+    rpt = lint_html_file(args.path)
+    if args.out:
+        args.out.write_text(json.dumps(rpt.to_dict(), indent=2))
+    for f in rpt.errors:
+        print(f"  ERROR  [{f.rule}] {f.message}")
+    for w in rpt.warnings:
+        print(f"  warn   [{w.rule}] {w.message}")
+    return 0 if rpt.ok else 1
+
+
+_DISPATCH = {
+    "info": _cmd_info, "init": _cmd_init,
+    "compile": _cmd_compile, "lint": _cmd_lint,
+}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
