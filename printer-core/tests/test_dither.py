@@ -66,7 +66,8 @@ def test_atkinson_golden_digest():
     img = Image.open(FIXTURE)
     out = atkinson_dither(img.copy())
     assert _digest(out) == ATKINSON_RAMP_SHA256, (
-        "Atkinson output drifted — the algorithm is shared with service/. "
-        "Either fix the regression or update the golden in lockstep with "
-        "the corresponding service/tests update."
+        "Atkinson output drifted — this is the authoritative golden for "
+        "the algorithm in printer_core.dither. If the change is intentional, "
+        "update ATKINSON_RAMP_SHA256 here. The service/ shim and parity "
+        "test will reflect the change automatically."
     )
