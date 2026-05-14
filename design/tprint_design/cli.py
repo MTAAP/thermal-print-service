@@ -11,6 +11,7 @@ import json
 import sys
 from collections.abc import Sequence
 from importlib.resources import files
+from pathlib import Path
 
 from printer_core.constants import (
     DPMM,
@@ -31,6 +32,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_info = sub.add_parser("info", help="Show engine + design info")
     p_info.add_argument("--json", action="store_true",
                         help="Emit machine-readable JSON")
+
+    p_init = sub.add_parser("init", help="Drop a starter HTML scaffold")
+    p_init.add_argument("path", type=Path, help="Destination .html file")
+    p_init.add_argument("--template", choices=[
+        "blank", "note", "banner", "literary", "scroll",
+    ], default="blank")
+    p_init.add_argument("--force", action="store_true",
+                        help="Overwrite existing file")
 
     return p
 
@@ -55,7 +64,17 @@ def _cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
-_DISPATCH = {"info": _cmd_info}
+def _cmd_init(args: argparse.Namespace) -> int:
+    if args.path.exists() and not args.force:
+        print(f"refusing to overwrite {args.path} (use --force)", file=sys.stderr)
+        return 2
+    src = files("tprint_design.templates") / f"{args.template}.html"
+    args.path.write_text(src.read_text())
+    print(f"wrote {args.path} (template: {args.template})")
+    return 0
+
+
+_DISPATCH = {"info": _cmd_info, "init": _cmd_init}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
