@@ -1,5 +1,6 @@
 /* tprint-design: injected before user CSS. Override-safe. */
 :root { color-scheme: light only; }
+*, *::before, *::after { box-sizing: border-box; }
 html, body {
   margin: 0;
   padding: 0;

@@ -50,4 +50,4 @@ design-lint:
 	$(DESIGN_PY) -m ruff check design/tprint_design design/tests
 
 design-typecheck:
-	$(DESIGN_PY) -m mypy design/tprint_design
+	$(DESIGN_PY) -m mypy --config-file design/pyproject.toml design/tprint_design
