@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
+
+from PIL import Image
+from printer_core.constants import DPMM
 
 
 class LintSeverity(StrEnum):
@@ -66,3 +70,57 @@ class LintReport:
             "warnings": [w.to_dict() for w in self.warnings],
             "stats": self.stats,
         }
+
+
+def lint_html_text(
+    html: str,
+    *,
+    rendered_rgb: Image.Image | None = None,
+    rendered_one_bit: Image.Image | None = None,
+    render_ms: int | None = None,
+    blocked_external_requests: int | None = None,
+    max_length_mm_flag: int | None = None,
+) -> LintReport:
+    # Function-local imports: lint_pre and lint_post both import LintFinding
+    # / LintSeverity from this module, so a top-level import here would
+    # produce a circular ImportError. Keeping these local resolves the cycle
+    # without scattering bottom-of-file imports paired with E402 suppressions.
+    from tprint_design.lint_post import post_render_lint
+    from tprint_design.lint_pre import pre_render_lint
+    from tprint_design.pi_info import effective_max_length_mm
+
+    rpt = LintReport()
+    rpt.extend(pre_render_lint(html))
+    if rendered_rgb is not None and rendered_one_bit is not None:
+        cap = effective_max_length_mm(flag_value=max_length_mm_flag)
+        rpt.extend(post_render_lint(
+            rgb=rendered_rgb, one_bit=rendered_one_bit,
+            effective_max_length_mm=cap,
+        ))
+        rpt.stats.update({
+            "rendered_height_px": rendered_one_bit.height,
+            "estimated_paper_mm": rendered_one_bit.height / DPMM,
+            "ink_pixel_ratio": _ink_ratio(rendered_one_bit),
+        })
+    if render_ms is not None:
+        rpt.stats["render_ms"] = render_ms
+    if blocked_external_requests is not None:
+        rpt.stats["blocked_external_requests"] = blocked_external_requests
+    return rpt
+
+
+def lint_html_file(path: Path, **kwargs: Any) -> LintReport:
+    return lint_html_text(Path(path).read_text(), **kwargs)
+
+
+def _ink_ratio(img: Image.Image) -> float:
+    # Deliberate duplicate of `lint_post._ink_ratio` — same 7-line body,
+    # but extracting it would require a third module (printer-core?) for
+    # marginal benefit. Two copies is fine here.
+    if img.mode != "1":
+        img = img.convert("1")
+    total = img.width * img.height
+    if total == 0:
+        return 0.0
+    black = sum(1 for v in img.getdata() if v == 0)  # type: ignore[attr-defined, misc]
+    return black / total
