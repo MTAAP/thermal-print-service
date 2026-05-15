@@ -1,13 +1,22 @@
 """Post-render lint pass — pixel inspection of the rendered raster."""
 from __future__ import annotations
 
-from PIL import Image
+from PIL import Image, ImageChops
 from printer_core.constants import DPMM
 
 from tprint_design.lint import LintFinding, LintSeverity
 
 _VERY_LONG_PX = 40000  # ~5 m of paper at 8 dpmm
 _MOSTLY_EMPTY_RATIO = 0.05  # < 5 % ink → warn
+
+# Per-pixel chroma threshold (max |R-G|, |G-B|, |R-B|) above which we count
+# the pixel as colored. Subpixel font antialiasing under some Chromium builds
+# produces fringes up to ~20 even with --disable-lcd-text — keep slack.
+_COLOR_CHROMA_TOLERANCE = 24
+# Fraction of total pixels that must be colored before we flag the render.
+# A few stray colored pixels from glyph rasterization shouldn't trip the
+# check; an intentional color block always covers far more.
+_COLOR_RATIO_THRESHOLD = 0.001  # 0.1%
 
 
 def post_render_lint(
@@ -58,7 +67,18 @@ def post_render_lint(
 def _has_color(img: Image.Image) -> bool:
     if img.mode != "RGB":
         img = img.convert("RGB")
-    return any(r != g or g != b for r, g, b in img.getdata())  # type: ignore[attr-defined, misc]
+    r, g, b = img.split()
+    max_chroma = ImageChops.lighter(
+        ImageChops.lighter(
+            ImageChops.difference(r, g),
+            ImageChops.difference(g, b),
+        ),
+        ImageChops.difference(r, b),
+    )
+    mask = max_chroma.point(lambda v: 255 if v > _COLOR_CHROMA_TOLERANCE else 0)
+    colored_pixels = mask.histogram()[255]
+    total = mask.width * mask.height
+    return total > 0 and (colored_pixels / total) > _COLOR_RATIO_THRESHOLD
 
 
 def _ink_ratio(img: Image.Image) -> float:

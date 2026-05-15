@@ -7,6 +7,7 @@ proofing loop.
 """
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,7 +50,13 @@ def render_html_to_png(
     final_html = inject_into(html)
     blocked = 0
     if out_path is None:
-        out_path = Path(tempfile.mkstemp(suffix=".png")[1])
+        # mkstemp returns (fd, path) and hands ownership of the fd to us;
+        # discarding it leaks file descriptors when this is called in a
+        # long-running agent loop. Close it before we overwrite the file
+        # via write_bytes() below.
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        out_path = Path(tmp_path)
 
     def _route(route):
         nonlocal blocked
@@ -62,7 +69,15 @@ def render_html_to_png(
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # --disable-lcd-text forces grayscale font antialiasing in the
+            # content area instead of subpixel (LCD) antialiasing. Without it,
+            # Chromium emits red/blue subpixel fringes around glyphs on Linux
+            # which would trip the color_used lint downstream even though the
+            # source HTML is pure black-on-white.
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-lcd-text", "--font-render-hinting=none"],
+            )
             try:
                 context = browser.new_context(
                     viewport={"width": width, "height": 800},

@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING
 from printer_core.constants import (
     DPMM,
     LIVE_WIDTH_PX,
-    MAX_LENGTH_MM_DEFAULT,
     PRINT_HEAD_WIDTH_PX,
 )
+
+from tprint_design.pi_info import effective_max_length_mm
 
 if TYPE_CHECKING:
     import httpx
@@ -76,11 +77,16 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_info(args: argparse.Namespace) -> int:
     md = _load_guidelines_md()
     if args.json:
+        # Resolve via the same helper lint uses, so `info` and `lint` always
+        # report the same effective cap. Today this returns the bundled
+        # default; once a Pi-info refresh path lands, both surfaces will
+        # pick up the cached value automatically.
+        max_length_mm = effective_max_length_mm(flag_value=None)
         payload = {
             "live_width_px": LIVE_WIDTH_PX,
             "print_head_px": PRINT_HEAD_WIDTH_PX,
             "dpmm": DPMM,
-            "max_length_mm_default": MAX_LENGTH_MM_DEFAULT,
+            "max_length_mm_default": max_length_mm,
             "fonts_available": [
                 "IBM Plex Sans", "JetBrains Mono", "Noto Sans SC",
             ],

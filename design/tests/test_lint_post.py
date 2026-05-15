@@ -48,6 +48,26 @@ def test_height_over_5m_warns():
                for f in findings)
 
 
+def test_color_check_tolerates_subpixel_aa_fringes():
+    # Mostly grayscale render with a sparse handful of strongly tinted pixels
+    # along glyph edges — simulates Chromium's subpixel font antialiasing
+    # under Linux. Should NOT trip color_used: the colored-pixel ratio is
+    # well below the 0.1% threshold.
+    img = Image.new("RGB", (576, 200), (255, 255, 255))
+    for y in range(80, 120):
+        for x in range(100, 200):
+            img.putpixel((x, y), (0, 0, 0))
+    for y in range(80, 120, 4):
+        img.putpixel((99, y), (255, 100, 100))   # red fringe
+        img.putpixel((200, y), (100, 100, 255))  # blue fringe
+    findings = post_render_lint(
+        rgb=img,
+        one_bit=Image.new("1", (576, 200), 1),
+        effective_max_length_mm=2000,
+    )
+    assert not any(f.rule == "color_used" for f in findings)
+
+
 def test_clean_render_produces_no_findings():
     # 50% black: not empty, not over length.
     img = Image.new("1", (576, 200), 0)
