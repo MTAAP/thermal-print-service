@@ -1,35 +1,27 @@
 [project]
-name = "thermal-printer-mcp"
-version = "0.2.0"
-description = "MCP server adapter for the Thermal Print Service tailnet HTTP API"
+name = "printer-core"
+version = "0.1.0"
+description = "Shared primitives (dither, constants) for the thermal print stack"
 requires-python = ">=3.11"
 dependencies = [
-  "mcp>=1.2",
-  "httpx>=0.27",
-  "pydantic>=2.9",
+  "Pillow>=11.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3",
-  "pytest-asyncio>=0.24",
-  "respx>=0.21",
   "ruff>=0.7",
   "mypy>=1.13",
 ]
-
-[project.scripts]
-printer-mcp = "printer_mcp.__main__:main"
 
 [build-system]
 requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["printer_mcp*"]
+include = ["printer_core*"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
@@ -38,3 +30,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

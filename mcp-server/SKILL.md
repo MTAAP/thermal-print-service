@@ -69,6 +69,32 @@ Some shapes the surface accommodates well (not an exhaustive list — invent fre
 
 `print_test()` — bundled hello-world page exercising every block type. Good for hardware verification after a move.
 
+`get_design_guidelines()` — return the thermal-design rulebook (live print width, DPMM, fonts, lint summary, full `tprint-design` CLI workflow). Call this once at the start of an HTML-design session. The CLI itself runs locally on the user's laptop — see `tprint-design --help`.
+
+## When to reach for HTML design vs JSON blocks
+
+- **JSON blocks** (`print_document`): default. The block schema covers
+  ~90% of cases — daily briefings, notes, lists, banners, photos.
+  Validated, predictable, fast.
+
+- **HTML design** (`tprint-design` CLI on the user's machine): for
+  intricate one-off pieces where the block schema feels limiting —
+  custom decorative borders, multi-section layouts inside a single
+  segment, hand-tuned typography experiments, generative compositions.
+
+  Workflow:
+  1. Call `get_design_guidelines` to load the rulebook.
+  2. Use `Write` to create `<name>.html`. Start from a template
+     (`tprint-design init <name>.html --template <kind>`).
+  3. `tprint-design compile <name>.html` (via Bash).
+  4. `Read <name>.png` — look at the dithered output.
+  5. Iterate: edit HTML → recompile → re-read.
+  6. `tprint-design print <name>.html` when satisfied (or `--dry-run`
+     to validate at the Pi without paper).
+
+  Honor lint errors. Warnings are advisory but usually right. The CLI
+  blocks `print` if any lint errors are present.
+
 ## Composition principles
 
 - **One column, narrow, top-down.** The schema is intentionally flat — no nested layouts, no columns, no inline images-within-paragraphs. If a layout needs columns or tables, it doesn't belong on 80mm paper.

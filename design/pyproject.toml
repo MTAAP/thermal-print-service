@@ -1,0 +1,48 @@
+[project]
+name = "tprint-design"
+version = "0.1.0"
+description = "Local CLI for compiling HTML designs to thermal-ready 1-bit PNGs"
+requires-python = ">=3.11"
+dependencies = [
+  "playwright>=1.49",
+  "Pillow>=11.0",
+  "httpx>=0.27",
+  "printer-core",  # editable sibling: pip install -e ../printer-core (not on PyPI)
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.7",
+  "mypy>=1.13",
+]
+
+[project.scripts]
+tprint-design = "tprint_design.cli:main"
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tprint_design*"]
+
+[tool.setuptools.package-data]
+tprint_design = ["fonts/*", "templates/*.html", "guidelines.md", "defaults/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: integration tests that launch headless Chromium",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

@@ -6,6 +6,27 @@ on:
     branches: [main]
 
 jobs:
+  printer-core:
+    name: printer-core py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install printer-core
+        run: python -m pip install -e 'printer-core[dev]'
+      - name: Test printer-core
+        run: python -m pytest printer-core/tests
+      - name: Lint printer-core
+        run: python -m ruff check printer-core/printer_core printer-core/tests
+      - name: Typecheck printer-core
+        run: python -m mypy printer-core/printer_core
+
   service:
     name: service py${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -18,6 +39,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install printer-core (editable sibling for service)
+        run: python -m pip install -e ./printer-core
       - name: Install service
         run: python -m pip install -e 'service[dev]'
       - name: Test service
@@ -49,3 +72,32 @@ jobs:
       - name: Typecheck MCP server
         working-directory: mcp-server
         run: python -m mypy printer_mcp
+
+  design:
+    name: design py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install printer-core (editable sibling for design)
+        run: python -m pip install -e ./printer-core
+      - name: Install design
+        run: python -m pip install -e 'design[dev]'
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: Test design (fast)
+        run: python -m pytest design/tests -m "not slow"
+      - name: Test design (slow / integration)
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+        run: python -m pytest design/tests
+      - name: Lint design
+        run: python -m ruff check design/tprint_design design/tests
+      - name: Typecheck design
+        working-directory: design
+        run: python -m mypy tprint_design

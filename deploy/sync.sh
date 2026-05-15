@@ -25,6 +25,7 @@ ssh "${REMOTE}" "REMOTE_DIR_ESCAPED=${REMOTE_DIR_ESCAPED} bash -se" <<'PI'
     python3 -m venv .venv
   fi
   .venv/bin/pip install --upgrade pip wheel
+  .venv/bin/pip install -e printer-core
   .venv/bin/pip install -e service
 PI
 

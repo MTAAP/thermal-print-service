@@ -197,6 +197,19 @@ def build_server(cfg: McpConfig, client: PrintServiceClient, cache: SchemaCache)
                 ),
                 inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
             ),
+            mcp_types.Tool(
+                name="get_design_guidelines",
+                description=(
+                    "Return the thermal-design rulebook (live print width, "
+                    "DPMM, available fonts, lint rules summary, and the full "
+                    "tprint-design CLI workflow). Call this once at the start "
+                    "of an HTML-design session to load the rules into context. "
+                    "For the CLI itself, see the design package's tprint-design "
+                    "binary."
+                ),
+                inputSchema={"type": "object", "properties": {},
+                             "additionalProperties": False},
+            ),
         ]
 
     @server.call_tool()
@@ -218,6 +231,9 @@ def build_server(cfg: McpConfig, client: PrintServiceClient, cache: SchemaCache)
                 return _ok(await client.post_reprint(job_id, force_json=force_json))
             if name == "print_test":
                 return _ok(await client.post_test())
+            if name == "get_design_guidelines":
+                from printer_mcp.design_guidelines import payload
+                return _ok(payload())
         except PrintServiceError as exc:
             return _err(exc)
         except KeyError as exc:
