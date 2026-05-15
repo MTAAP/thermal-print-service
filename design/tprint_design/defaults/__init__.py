@@ -27,7 +27,11 @@ def thermal_reset_css() -> str:
 def font_face_block() -> str:
     parts: list[str] = []
     for family, filename, extra in _FONT_FACES:
-        url = f"file://{(_FONT_DIR / filename).resolve()}"
+        # Path.as_uri() handles platform-specific quoting (drive letters and
+        # backslashes on Windows, percent-encoding for spaces) — naive
+        # f"file://{path}" string concatenation produces invalid URLs on
+        # Windows and breaks if the resolved path contains spaces.
+        url = (_FONT_DIR / filename).resolve().as_uri()
         decls = "".join(f"{k}: {v}; " for k, v in extra.items())
         parts.append(
             f"@font-face {{ font-family: '{family}'; "

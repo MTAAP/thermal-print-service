@@ -37,6 +37,38 @@ def test_text_shadow_warns():
 
 
 @pytest.mark.slow
+def test_external_resource_in_css_url_flagged():
+    # background-image URL pointing at a CDN — blocked at runtime, must
+    # surface in lint as well so the user sees the offending URL.
+    html = (
+        "<head><style>"
+        "body { background-image: url('https://cdn.example.com/bg.png'); }"
+        "</style></head><body>hi</body>"
+    )
+    findings = pre_render_lint(html)
+    assert any(
+        f.rule == "external_resource"
+        and "https://cdn.example.com/bg.png" in f.message
+        for f in findings
+    )
+
+
+@pytest.mark.slow
+def test_external_resource_in_css_import_flagged():
+    html = (
+        "<head><style>"
+        "@import url('https://cdn.example.com/styles.css');"
+        "</style></head><body>hi</body>"
+    )
+    findings = pre_render_lint(html)
+    assert any(
+        f.rule == "external_resource"
+        and "https://cdn.example.com/styles.css" in f.message
+        for f in findings
+    )
+
+
+@pytest.mark.slow
 def test_clean_html_produces_no_pre_render_findings():
     html = "<body><p style='font-size:18px'>hi</p></body>"
     findings = pre_render_lint(html)

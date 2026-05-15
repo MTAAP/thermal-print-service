@@ -22,16 +22,25 @@ def test_font_face_block_includes_all_required_families():
 
 def test_font_face_block_uses_file_urls():
     css = defaults.font_face_block()
-    assert "file://" in css
+    # Path.as_uri() always emits "file:///" with three slashes, never two.
+    # Two slashes would mean a hostname-style URL ("file://host/path") and
+    # is invalid for local files on most platforms.
+    assert "file:///" in css
+    assert "file://\\" not in css  # Windows backslash regression guard
 
 
 def test_font_face_block_paths_resolve():
-    css = defaults.font_face_block()
-    # Extract every src URL and verify the file exists.
     import re
-    for match in re.finditer(r"url\('file://([^']+)'\)", css):
-        path = Path(match.group(1))
-        assert path.exists(), f"font not found at {path}"
+    from urllib.parse import unquote, urlparse
+    from urllib.request import url2pathname
+
+    css = defaults.font_face_block()
+    for match in re.finditer(r"url\('([^']+)'\)", css):
+        url = match.group(1)
+        # url2pathname converts file:// URLs to native filesystem paths
+        # correctly on every platform (including Windows drive letters).
+        local_path = Path(url2pathname(unquote(urlparse(url).path)))
+        assert local_path.exists(), f"font not found at {local_path}"
 
 
 def test_inject_into_full_html_document():

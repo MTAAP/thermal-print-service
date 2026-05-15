@@ -99,4 +99,5 @@ jobs:
       - name: Lint design
         run: python -m ruff check design/tprint_design design/tests
       - name: Typecheck design
-        run: python -m mypy design/tprint_design
+        working-directory: design
+        run: python -m mypy tprint_design

@@ -17,7 +17,7 @@ _WALK_JS = r"""
   const findings = [];
   const isExternal = (url) => /^(https?|wss?):/i.test(url);
 
-  // External resources
+  // External resources via tag attributes (img/script/link/iframe/...)
   for (const tag of ['img', 'script', 'link', 'iframe', 'video', 'audio']) {
     for (const el of document.querySelectorAll(tag)) {
       const url = el.src || el.href;
@@ -28,6 +28,44 @@ _WALK_JS = r"""
           message: `${tag} loads ${url} — external network is blocked`,
           selector: el.tagName.toLowerCase(),
         });
+      }
+    }
+  }
+
+  // External resources embedded in CSS: @import, @font-face src, and any
+  // url(...) reference in style rules (background-image, list-style, etc.).
+  // These are blocked at runtime but the tag walk above can't see them, so
+  // without this scan a user gets a "lint clean" report and a render that
+  // silently falls back to system fonts or missing assets.
+  const cssUrlRe = /url\(\s*['"]?([^'")\s]+)['"]?\s*\)/g;
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try {
+      rules = sheet.cssRules || sheet.rules || [];
+    } catch (e) {
+      // CORS-blocked cross-origin stylesheet — the <link> tag itself was
+      // already flagged above, so skipping the rule walk is fine.
+      continue;
+    }
+    for (const rule of rules) {
+      if (rule.type === CSSRule.IMPORT_RULE && rule.href && isExternal(rule.href)) {
+        findings.push({
+          rule: 'external_resource',
+          severity: 'error',
+          message: `@import loads ${rule.href} — external network is blocked`,
+        });
+        continue;
+      }
+      const text = rule.cssText || '';
+      for (const match of text.matchAll(cssUrlRe)) {
+        const url = match[1];
+        if (isExternal(url)) {
+          findings.push({
+            rule: 'external_resource',
+            severity: 'error',
+            message: `CSS rule loads ${url} — external network is blocked`,
+          });
+        }
       }
     }
   }
