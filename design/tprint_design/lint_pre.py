@@ -32,11 +32,14 @@ _WALK_JS = r"""
     }
   }
 
-  // External resources embedded in CSS: @import, @font-face src, and any
-  // url(...) reference in style rules (background-image, list-style, etc.).
-  // These are blocked at runtime but the tag walk above can't see them, so
-  // without this scan a user gets a "lint clean" report and a render that
-  // silently falls back to system fonts or missing assets.
+  // Walk every stylesheet rule. We catch two classes of issue here:
+  //   1. External resources embedded in CSS (@import, @font-face src,
+  //      background-image, etc.) — blocked at runtime but invisible to
+  //      the tag walk above.
+  //   2. Shadow declarations on a selector other than inline style. The
+  //      reset's `* { text-shadow: none !important }` masks computed
+  //      style, so the el.style scan below can't see them either; we
+  //      have to inspect the rule's own declaration block.
   const cssUrlRe = /url\(\s*['"]?([^'")\s]+)['"]?\s*\)/g;
   for (const sheet of document.styleSheets) {
     let rules;
@@ -64,6 +67,31 @@ _WALK_JS = r"""
             rule: 'external_resource',
             severity: 'error',
             message: `CSS rule loads ${url} — external network is blocked`,
+          });
+        }
+      }
+      // Shadow checks. rule.style.textShadow / boxShadow give the parsed
+      // value (or '' if unset). 'none' values — including the reset's own
+      // universal-selector !important rule — are filtered out so the
+      // reset can't self-flag.
+      const sel = rule.selectorText || '';
+      if (rule.style) {
+        const ts = rule.style.textShadow;
+        if (ts && ts !== 'none') {
+          findings.push({
+            rule: 'text_shadow',
+            severity: 'warning',
+            message: `${sel || 'rule'} sets text-shadow: ${ts} — dithers to noise`,
+            selector: sel || undefined,
+          });
+        }
+        const bs = rule.style.boxShadow;
+        if (bs && bs !== 'none') {
+          findings.push({
+            rule: 'box_shadow',
+            severity: 'warning',
+            message: `${sel || 'rule'} sets box-shadow: ${bs} — dithers to noise`,
+            selector: sel || undefined,
           });
         }
       }

@@ -52,6 +52,24 @@ def test_inject_into_full_html_document():
         "reset must be injected into the head, before body content"
 
 
+def test_inject_places_reset_before_user_head_styles():
+    # User styles declared in <head> must be source-ordered AFTER the reset
+    # so they win on tied specificity (e.g. user redefining body padding).
+    user_style = "<style>body { padding: 99px; }</style>"
+    html = (
+        "<!doctype html><html><head>"
+        f"{user_style}"
+        "</head><body>hi</body></html>"
+    )
+    out = defaults.inject_into(html)
+    reset_idx = out.index("color: #000000")
+    user_idx = out.index("padding: 99px")
+    assert reset_idx < user_idx, (
+        "user CSS must come after the injected reset so source-order ties "
+        "favor the user, not the reset"
+    )
+
+
 def test_inject_wraps_html_with_no_head():
     html = "<p>hello</p>"
     out = defaults.inject_into(html)

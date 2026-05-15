@@ -37,6 +37,40 @@ def test_text_shadow_warns():
 
 
 @pytest.mark.slow
+def test_text_shadow_in_style_block_flagged():
+    # Shadow set via a <style> rule (not inline style="...") — the el.style
+    # walk can't see this and the reset's !important forces computed-style
+    # back to 'none'. The stylesheet-rule scan must catch it.
+    html = (
+        "<head><style>"
+        "p { text-shadow: 1px 1px #000; }"
+        "</style></head><body><p>x</p></body>"
+    )
+    findings = pre_render_lint(html)
+    assert any(f.rule == "text_shadow" for f in findings)
+
+
+@pytest.mark.slow
+def test_box_shadow_via_class_selector_flagged():
+    html = (
+        "<head><style>"
+        ".card { box-shadow: 0 0 4px #000; }"
+        "</style></head><body><div class='card'>x</div></body>"
+    )
+    findings = pre_render_lint(html)
+    assert any(f.rule == "box_shadow" for f in findings)
+
+
+@pytest.mark.slow
+def test_reset_shadow_none_does_not_self_flag():
+    # The reset itself contains `* { text-shadow: none !important }`. That
+    # must not trip the rule scan — only non-'none' shadow values count.
+    html = "<body><p>plain text</p></body>"
+    findings = pre_render_lint(html)
+    assert not any(f.rule in ("text_shadow", "box_shadow") for f in findings)
+
+
+@pytest.mark.slow
 def test_external_resource_in_css_url_flagged():
     # background-image URL pointing at a CDN — blocked at runtime, must
     # surface in lint as well so the user sees the offending URL.

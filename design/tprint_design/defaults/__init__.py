@@ -47,15 +47,23 @@ def _injected_style() -> str:
 def inject_into(html: str) -> str:
     """Inject default style block into the HTML's <head>.
 
-    If the document has no <head>, wrap the input in a minimal HTML
-    envelope that includes one. Idempotency is not guaranteed — calling
-    twice will inject twice; callers compile from source HTML.
+    Reset is prepended (inserted right after the opening <head> tag) so
+    user styles declared later in the document override it on source-order
+    ties. The reset's !important shadow rules still win over user CSS
+    because !important beats source order. If the document has no <head>,
+    wrap the input in a minimal HTML envelope that includes one.
+    Idempotency is not guaranteed — calling twice will inject twice;
+    callers compile from source HTML.
     """
     style = _injected_style()
     lower = html.lower()
-    head_idx = lower.find("</head>")
-    if head_idx != -1:
-        return html[:head_idx] + style + html[head_idx:]
+    head_open_idx = lower.find("<head")
+    if head_open_idx != -1:
+        # Find the end of the opening tag (the first '>' after '<head').
+        tag_end = lower.find(">", head_open_idx)
+        if tag_end != -1:
+            insert_at = tag_end + 1
+            return html[:insert_at] + style + html[insert_at:]
     body_idx = lower.find("<body")
     if body_idx == -1:
         return (
