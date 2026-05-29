@@ -135,6 +135,7 @@ def test_list_tools_returns_expected_set(cfg, sample_schema_payload):
         "list_recent_jobs",
         "reprint_job",
         "print_test",
+        "get_design_guidelines",
     }
 
 
