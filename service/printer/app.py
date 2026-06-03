@@ -386,19 +386,23 @@ def create_app(deps: AppDeps) -> FastAPI:
 
     def _scan_job_records() -> tuple[dict[str, dict], dict[str, dict]]:
         accepted: dict[str, dict] = {}
-        terminal: dict[str, dict] = {}
+        latest: dict[str, dict] = {}
         for r in deps.joblog.replay():
             if r.event == "accepted":
                 accepted[r.job_id] = r.__dict__
-            elif r.event in {"printed", "expired", "retry_timeout", "unknown_partial"}:
-                terminal[r.job_id] = r.__dict__
-        return accepted, terminal
+            else:
+                # replay() is chronological, so the last non-accepted record is
+                # the job's current state. Tracking the latest event (not just
+                # terminal ones) means an in-progress retry surfaces as "retry"
+                # instead of falling back to "queued".
+                latest[r.job_id] = r.__dict__
+        return accepted, latest
 
     @app.get("/jobs")
     async def jobs(limit: int = 20):
-        accepted, terminal = _scan_job_records()
+        accepted, latest = _scan_job_records()
         out = [
-            _build_job_entry(jid, a, terminal.get(jid, {}))
+            _build_job_entry(jid, a, latest.get(jid, {}))
             for jid, a in list(accepted.items())[-limit:]
         ]
         return {"jobs": out}
@@ -408,12 +412,12 @@ def create_app(deps: AppDeps) -> FastAPI:
         if not _JOB_ID_RE.match(job_id):
             return JSONResponse(status_code=404,
                                 content={"reason": "job_not_found"})
-        accepted, terminal = _scan_job_records()
+        accepted, latest = _scan_job_records()
         a = accepted.get(job_id)
         if a is None:
             return JSONResponse(status_code=404,
                                 content={"reason": "job_not_found"})
-        return _build_job_entry(job_id, a, terminal.get(job_id, {}))
+        return _build_job_entry(job_id, a, latest.get(job_id, {}))
 
     @app.get("/metrics")
     async def metrics():
