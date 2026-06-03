@@ -115,6 +115,24 @@ def test_inject_resolves_relative_user_base_against_source(tmp_path):
     assert out.index(f'href="{expected}"') < out.index('href="./assets/"')
 
 
+def test_inject_preserves_unquoted_absolute_user_base(tmp_path):
+    # Unquoted attribute values are valid HTML. An unquoted absolute base must
+    # be recognized and respected, not overridden by an injected source base.
+    src = tmp_path / "design.html"
+    user_html = "<head><base href=https://cdn.example.com/></head><body>x</body>"
+    out = defaults.inject_into(user_html, source_path=src)
+    assert out.count("<base ") == 1
+    assert tmp_path.resolve().as_uri() not in out
+
+
+def test_inject_resolves_unquoted_relative_user_base(tmp_path):
+    src = tmp_path / "design.html"
+    user_html = "<head><base href=./assets/></head><body>x</body>"
+    out = defaults.inject_into(user_html, source_path=src)
+    expected = (src.parent.resolve() / "assets").as_uri() + "/"
+    assert f'<base href="{expected}">' in out
+
+
 def test_inject_skips_base_when_no_source_path():
     html = "<body><p>x</p></body>"
     out = defaults.inject_into(html)

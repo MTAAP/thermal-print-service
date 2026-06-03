@@ -15,11 +15,13 @@ _PACKAGE_ROOT = Path(__file__).parent.parent
 _FONT_DIR = _PACKAGE_ROOT / "fonts"
 
 # Capture the href of a user-declared <base href="...">. The `\b` after `base`
-# keeps the deprecated `<basefont>` element from matching, and capturing the
-# href lets _build_head_block tell an absolute base (respect it) from a
-# relative one (resolve it against the source dir).
+# keeps the deprecated `<basefont>` element from matching. The value may be
+# double-quoted, single-quoted, or unquoted (all valid HTML); capturing it lets
+# _build_head_block tell an absolute base (respect it) from a relative one
+# (resolve it against the source dir).
 _USER_BASE_HREF_RE = re.compile(
-    r"<base\b[^>]*?\bhref\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE
+    r"<base\b[^>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))",
+    re.IGNORECASE,
 )
 # Absolute = has a URL scheme (file:, https:) or is protocol-relative (//host).
 _ABSOLUTE_URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*:|^//", re.IGNORECASE)
@@ -150,4 +152,8 @@ def _build_head_block(html: str, source_path: Path | None) -> str:
 
 def _user_base_href(html: str) -> str | None:
     m = _USER_BASE_HREF_RE.search(html)
-    return m.group(1).strip() if m else None
+    if not m:
+        return None
+    # Exactly one of the three value groups (double/single/unquoted) matched.
+    href = m.group(1) or m.group(2) or m.group(3)
+    return href.strip() if href else None
