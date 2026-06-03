@@ -9,14 +9,20 @@ from __future__ import annotations
 import re
 from importlib.resources import files
 from pathlib import Path
+from urllib.parse import urljoin
 
 _PACKAGE_ROOT = Path(__file__).parent.parent
 _FONT_DIR = _PACKAGE_ROOT / "fonts"
 
-# Substring `"<base"` would also match the deprecated `<basefont>` element
-# and produce a false positive; this pattern requires whitespace or `>`
-# right after `base` so only the real <base> tag short-circuits injection.
-_USER_BASE_RE = re.compile(r"<base[\s>]", re.IGNORECASE)
+# Capture the href of a user-declared <base href="...">. The `\b` after `base`
+# keeps the deprecated `<basefont>` element from matching, and capturing the
+# href lets _build_head_block tell an absolute base (respect it) from a
+# relative one (resolve it against the source dir).
+_USER_BASE_HREF_RE = re.compile(
+    r"<base\b[^>]*?\bhref\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE
+)
+# Absolute = has a URL scheme (file:, https:) or is protocol-relative (//host).
+_ABSOLUTE_URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*:|^//", re.IGNORECASE)
 
 _FONT_FACES: list[tuple[str, str, dict[str, str]]] = [
     ("IBM Plex Sans",   "IBMPlexSans-Medium.ttf",   {}),
@@ -78,8 +84,9 @@ def inject_into(html: str, source_path: Path | None = None) -> str:
     tag is also prepended so relative refs (``./logo.png``,
     ``href="styles.css"``) in the source HTML resolve against the source
     file's directory rather than against the temp-file path the renderer
-    actually loads. Skipped if the document already declares its own
-    ``<base>`` so the user's choice wins.
+    actually loads. An absolute user ``<base>`` is respected as-is; a relative
+    user ``<base>`` is resolved against the source dir (it would otherwise
+    resolve against the temp render dir and silently drop its assets).
 
     If the document has no <head>, wrap the input in a minimal HTML
     envelope that includes one. Idempotency is not guaranteed — calling
@@ -119,10 +126,28 @@ def _build_head_block(html: str, source_path: Path | None) -> str:
     against URL-bearing additions to the injected styles.
     """
     style = _injected_style()
-    if source_path is None or _USER_BASE_RE.search(html):
+    if source_path is None:
         return style
     # Trailing slash is load-bearing: `<base href="file:///foo">` resolves
     # `./bar` to `file:///bar` (treating `foo` as a filename), while
     # `file:///foo/` resolves it to `file:///foo/bar`.
     base_uri = source_path.resolve().parent.as_uri() + "/"
-    return f'<base href="{base_uri}">{style}'
+    user_base = _user_base_href(html)
+    if user_base is None:
+        # No usable user <base>: inject the absolute source-dir base.
+        return f'<base href="{base_uri}">{style}'
+    if _ABSOLUTE_URL_RE.match(user_base):
+        # The user pinned an absolute base; respect it, inject nothing.
+        return style
+    # A relative user base (e.g. `<base href="./assets/">`) would resolve
+    # against the temp render dir the renderer loads, not the source file —
+    # its assets would 404 from a path the render-dir allowlist permits,
+    # silently dropping them with no blocked-fetch error. Resolve it against
+    # the source dir and inject that as the leading <base> (the first <base>
+    # wins) so the user's intended path still works.
+    return f'<base href="{urljoin(base_uri, user_base)}">{style}'
+
+
+def _user_base_href(html: str) -> str | None:
+    m = _USER_BASE_HREF_RE.search(html)
+    return m.group(1).strip() if m else None

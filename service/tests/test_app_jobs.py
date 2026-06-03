@@ -5,6 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from printer.app import create_app
+from printer.queue.joblog import JobRecord
 
 
 def _png_bytes():
@@ -44,6 +45,24 @@ async def test_get_job_by_id_returns_single_entry(fake_deps):
     # Same shape as the /jobs list entry — no envelope.
     assert "reprint_url" in body
     assert body["reprint_url"] == f"/jobs/{job_id}/reprint"
+
+
+@pytest.mark.asyncio
+async def test_get_job_reports_in_progress_retry_not_queued(fake_deps):
+    # A job that the worker has attempted and is backing off to retry has an
+    # `accepted` + `retry` record but no terminal record. Status must reflect
+    # the latest event ("retry"), not fall back to "queued".
+    app = create_app(fake_deps)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print/raw", content=_png_bytes(),
+                          headers={"Content-Type": "image/png", "X-Sender": "test"})
+        job_id = r.json()["id"]
+        fake_deps.joblog.append(JobRecord.retry(job_id=job_id, detail="printer offline"))
+        detail = await ac.get(f"/jobs/{job_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["status"] == "retry"
+    assert body["printed_at"] is None
 
 
 @pytest.mark.asyncio
