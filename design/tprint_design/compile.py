@@ -17,11 +17,16 @@ from pathlib import Path
 from PIL import Image
 from printer_core.constants import DPMM, PRINT_HEAD_WIDTH_PX
 from printer_core.dither import atkinson_dither
+from printer_core.ink import ink_ratio
 
 from tprint_design.render import RenderResult, render_html_to_png
 
 _TRIM_FLOOR_PX = 80
-_TRIM_LOOKBACK_ROWS = 16
+# Minimum inked-pixel count for a row to count as "meaningful content"
+# rather than a stray Atkinson-dither speckle. A real glyph row easily
+# clears 3 ink pixels; isolated single-pixel artifacts in trailing
+# whitespace are filtered out by this threshold.
+_TRIM_MIN_INK_PIXELS_PER_ROW = 3
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,7 @@ def compile_html(
     raw = render_html_to_png(
         html,
         out_path=out_path.with_suffix(".raw.png"),
+        source_path=src,
         width=width,
         timeout_ms=timeout_ms,
     )
@@ -77,7 +83,7 @@ def compile_html(
         rgb_path=rgb_path,
         rendered_height_px=height,
         estimated_paper_mm=height / DPMM,
-        ink_pixel_ratio=_ink_ratio(trimmed),
+        ink_pixel_ratio=ink_ratio(trimmed),
         render_ms=raw.duration_ms,
         blocked_external_requests=raw.blocked_external_requests,
         raw_render=raw,
@@ -85,14 +91,17 @@ def compile_html(
 
 
 def _trim_trailing_white(img: Image.Image) -> Image.Image:
-    """Drop trailing all-white rows. Floor at 80 px image height.
+    """Drop trailing rows below the last row with meaningful content.
 
-    Strategy: walk bottom-up looking for a run of `_TRIM_LOOKBACK_ROWS`
-    consecutive ink-bearing rows. The bottom-most row of that run is the
-    last legitimate content; crop just below it. The lookback guards
-    against stray dither pixels in the trailing whitespace producing a
-    too-tall result. If no such run exists (very short content), fall
-    back to the bottom-most ink row.
+    Walk bottom-up. The first row encountered with at least
+    ``_TRIM_MIN_INK_PIXELS_PER_ROW`` ink pixels is the last legitimate
+    content row; crop just below it. The density threshold filters
+    stray single-pixel Atkinson dither artifacts in trailing whitespace
+    so they don't extend the page, while still preserving sparse but
+    intentional trailing content (e.g. a caption line below a heavier
+    block separated by a margin). If no row clears the threshold, fall
+    back to the bottom-most row with any ink at all. Floor at
+    ``_TRIM_FLOOR_PX``.
     """
     if img.mode != "1":
         img = img.convert("1")
@@ -102,16 +111,14 @@ def _trim_trailing_white(img: Image.Image) -> Image.Image:
     px = img.load()
     assert px is not None
 
-    consecutive_ink = 0
     last_meaningful_row = -1
     for y in range(height - 1, -1, -1):
-        if any(px[x, y] == 0 for x in range(width)):  # type: ignore[arg-type]
-            consecutive_ink += 1
-            if consecutive_ink == _TRIM_LOOKBACK_ROWS:
-                last_meaningful_row = y + (_TRIM_LOOKBACK_ROWS - 1)
-                break
-        else:
-            consecutive_ink = 0
+        ink_count = sum(
+            1 for x in range(width) if px[x, y] == 0  # type: ignore[arg-type]
+        )
+        if ink_count >= _TRIM_MIN_INK_PIXELS_PER_ROW:
+            last_meaningful_row = y
+            break
 
     if last_meaningful_row < 0:
         for y in range(height - 1, -1, -1):
@@ -123,16 +130,3 @@ def _trim_trailing_white(img: Image.Image) -> Image.Image:
     if new_height >= height:
         return img
     return img.crop((0, 0, width, new_height))
-
-
-def _ink_ratio(img: Image.Image) -> float:
-    if img.mode != "1":
-        img = img.convert("1")
-    total = img.width * img.height
-    if total == 0:
-        return 0.0
-    # mode "1" pixels are 0 or 255 -- count black (0) as ink.
-    # Pillow stubs mark getdata() as non-iterable, but it iterates fine at runtime;
-    # see dither.py for the same workaround pattern with `# type: ignore`.
-    black = sum(1 for v in img.getdata() if v == 0)  # type: ignore[attr-defined,misc]
-    return black / total

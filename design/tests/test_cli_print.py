@@ -24,7 +24,7 @@ def test_print_subcommand_dry_run_posts_to_pi(tmp_path, monkeypatch):
             "X-Renderer-Version": "test",
         })
 
-    monkeypatch.setenv("PRINT_SERVICE_URL", "http://pi.test")
+    monkeypatch.setenv("PRINT_SERVICE_URL", "http://printer.test.ts.net")
     monkeypatch.setattr(
         "tprint_design.cli._http_client",
         lambda url: httpx.Client(transport=httpx.MockTransport(handler), base_url=url),
@@ -43,7 +43,7 @@ def test_print_refuses_when_lint_errors(tmp_path, monkeypatch):
         "<!doctype html><html><head></head>"
         "<body><img src='https://evil.example/y.png'></body></html>"
     )
-    monkeypatch.setenv("PRINT_SERVICE_URL", "http://pi.test")
+    monkeypatch.setenv("PRINT_SERVICE_URL", "http://printer.test.ts.net")
 
     posted = {"called": False}
 
