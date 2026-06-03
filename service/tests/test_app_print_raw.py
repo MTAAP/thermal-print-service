@@ -58,6 +58,46 @@ async def test_print_raw_rejects_images_over_decoded_pixel_cap(fake_deps):
 
 
 @pytest.mark.asyncio
+async def test_print_raw_rejects_oversized_body_via_content_length(fake_deps):
+    # Cap to 1 KB, then send a body that ADVERTISES too-big via the
+    # Content-Length header. The 413 must fire before we buffer the
+    # body — verified by the explicit cap-vs-Content-Length comparison.
+    fake_deps.config = dataclasses.replace(fake_deps.config, max_request_bytes=1024)
+    app = create_app(fake_deps)
+    big = b"\x00" * 2048
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post(
+            "/print/raw",
+            content=big,
+            headers={"Content-Type": "image/png"},
+        )
+    assert r.status_code == 413
+    assert r.json()["reason"] == "max_request_bytes"
+
+
+@pytest.mark.asyncio
+async def test_print_raw_rejects_oversized_body_when_streamed_in_chunks(fake_deps):
+    # Same cap, but stream the body in small chunks with no upfront
+    # Content-Length. The tally must reject mid-stream rather than
+    # buffer the whole payload before checking.
+    fake_deps.config = dataclasses.replace(fake_deps.config, max_request_bytes=1024)
+    app = create_app(fake_deps)
+
+    async def gen():
+        for _ in range(10):
+            yield b"\x00" * 512
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post(
+            "/print/raw",
+            content=gen(),
+            headers={"Content-Type": "image/png"},
+        )
+    assert r.status_code == 413
+    assert r.json()["reason"] == "max_request_bytes"
+
+
+@pytest.mark.asyncio
 async def test_print_raw_idempotency_returns_original_id(fake_deps):
     app = create_app(fake_deps)
     body = _png_bytes()

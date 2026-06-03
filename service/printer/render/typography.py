@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from printer.render.dither import atkinson_dither
+from printer.render.dither import atkinson_dither, ordered_dither
 
 # Body grid for body/prose copy. Body face (``body()``, JetBrains Mono Bold)
 # and prose face (``prose()``, IBM Plex Sans Medium) both render at 18 px
@@ -349,7 +349,6 @@ def _render_single_font(
             Image.Resampling.LANCZOS,
         )
     if dither == "ordered":
-        from printer.render.dither import ordered_dither
         return ordered_dither(img1x)
     return atkinson_dither(img1x)
 
@@ -463,7 +462,6 @@ def supersample_render(
             Image.Resampling.LANCZOS,
         )
     if dither == "ordered":
-        from printer.render.dither import ordered_dither
         return ordered_dither(img1x)
     return atkinson_dither(img1x)
 

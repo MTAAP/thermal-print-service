@@ -1,0 +1,9 @@
+{
+  "document_type": "test_small",
+  "blocks": [
+    {"type": "header", "text": "Hello, hardware", "style": "inverse_band"},
+    {"type": "paragraph", "text": "Lite confirmation print. If you can read this, the Pi is reachable, the renderer composed the page, the worker drained, and python-escpos pushed bytes to /dev/usb/lp0.", "align": "left"},
+    {"type": "rule", "style": "dashed"},
+    {"type": "footer", "text": "ok"}
+  ]
+}

@@ -1,6 +1,7 @@
 import io
 import time
 
+import pytest
 from PIL import Image
 
 from printer.queue.cache import PngCache
@@ -78,3 +79,36 @@ def test_delete_removes_all_chunks(state_dir):
     assert c.get_chunks("j") is None
     # No orphan files
     assert list(state_dir.glob("j*.png")) == []
+
+
+@pytest.mark.parametrize(
+    "bad_job_id",
+    [
+        "*",                # glob wildcard — would scan the whole cache
+        "?",
+        "[abc]",
+        "../etc/passwd",    # path traversal up
+        "../../foo",
+        "subdir/jid",       # path separator
+        r"foo\bar",
+        "with space",
+        "",                 # empty
+        "x" * 65,           # too long
+        "jid\x00null",      # control character
+    ],
+)
+def test_invalid_job_id_is_rejected(state_dir, bad_job_id):
+    """Cache must reject malformed job_ids at every public entry point —
+    otherwise a URL like /jobs/%2A/reprint turns get_chunks into a broad
+    glob scan of the cache dir."""
+    c = PngCache(state_dir, max_bytes=10_000_000, ttl_s=3600)
+    # Seed real data so we can prove the bad lookup doesn't see it.
+    c.put_chunks("legit", [b"data"])
+    with pytest.raises(ValueError):
+        c.get_chunks(bad_job_id)
+    with pytest.raises(ValueError):
+        c.put_chunks(bad_job_id, [b"x"])
+    with pytest.raises(ValueError):
+        c.delete(bad_job_id)
+    # And the legit entry is still there.
+    assert c.get_chunks("legit") == [b"data"]

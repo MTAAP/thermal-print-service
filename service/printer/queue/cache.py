@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import glob as glob_module
 import os
 import re
 import time
@@ -11,6 +12,21 @@ from pathlib import Path
 # layout (``<job>.png`` from before v0.6.0) is read transparently by
 # ``get_chunks`` so PNGs cached prior to upgrade still drain.
 _CHUNK_RE = re.compile(r"^(?P<jid>[^_]+)__(?P<idx>\d+)$")
+
+# Job IDs are generated via ``uuid4().hex`` (32 hex chars) but the cache
+# is a load-bearing trust boundary — a URL like ``/jobs/%2A/reprint``
+# would otherwise let an attacker turn ``Path.glob`` into a broad scan
+# of the cache dir. Restrict to non-empty alphanumerics + dash so:
+#   - Glob metacharacters (``*?[]``) are rejected
+#   - Path separators (``/``, ``\``) and ``..`` traversal are rejected
+#   - NUL and other control characters are rejected
+# Apply at every public entry point of ``PngCache``.
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+
+
+def _validate_job_id(job_id: str) -> None:
+    if not isinstance(job_id, str) or not _JOB_ID_RE.match(job_id):
+        raise ValueError(f"invalid job_id: {job_id!r}")
 
 
 class PngCache:
@@ -45,8 +61,12 @@ class PngCache:
     def _job_paths(self, job_id: str) -> list[Path]:
         """All on-disk PNGs for ``job_id``, ordered by chunk index, with
         the legacy single-file path as the trailing fallback."""
+        # glob.escape is belt-and-suspenders: _validate_job_id already
+        # rejects glob metacharacters at the public entry points, but we
+        # escape here too so an internal caller that bypasses validation
+        # still can't poison the glob pattern.
         chunks = sorted(
-            self._root.glob(f"{job_id}__*.png"),
+            self._root.glob(f"{glob_module.escape(job_id)}__*.png"),
             key=lambda p: int(p.stem.split("__")[1]),
         )
         if chunks:
@@ -85,6 +105,7 @@ class PngCache:
         ``unknown_partial``, but accepting a job with zero chunks at the HTTP
         layer is a caller error.
         """
+        _validate_job_id(job_id)
         # Remove any prior on-disk state for this id (chunked or legacy)
         # so a re-cache doesn't leave orphaned chunks if N shrank.
         for p in self._job_paths(job_id):
@@ -109,6 +130,7 @@ class PngCache:
         evaluated against the *most recent* chunk's mtime so partially
         re-touched jobs aren't half-expired.
         """
+        _validate_job_id(job_id)
         paths = self._job_paths(job_id)
         if not paths:
             self._lru.pop(job_id, None)
@@ -124,6 +146,7 @@ class PngCache:
         return [p.read_bytes() for p in paths]
 
     def delete(self, job_id: str) -> None:
+        _validate_job_id(job_id)
         for p in self._job_paths(job_id):
             with contextlib.suppress(FileNotFoundError):
                 p.unlink()
