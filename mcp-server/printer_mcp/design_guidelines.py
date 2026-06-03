@@ -5,16 +5,16 @@ lockstep when the rules change.
 """
 from __future__ import annotations
 
-from printer_core.constants import (
-    DPMM,
-    LIVE_WIDTH_PX,
-    MAX_LENGTH_MM_DEFAULT,
-    PRINT_HEAD_WIDTH_PX,
-)
-
-# Re-export under the payload-key-shaped name so callers reading the
-# MCP tool output and the local constant pair up at a glance.
-PRINT_HEAD_PX = PRINT_HEAD_WIDTH_PX
+# Spec-pinned hardware constants, denormalized from printer_core.constants /
+# the thermal-print-service spec. The MCP adapter is a standalone package with
+# no printer-core (and therefore no Pillow) dependency by design — it only
+# talks to the Pi over HTTP — so these four values live here directly rather
+# than importing the rendering core. Keep them in lockstep with
+# printer_core.constants if the geometry ever changes.
+LIVE_WIDTH_PX = 528
+PRINT_HEAD_PX = 576
+DPMM = 8.0
+MAX_LENGTH_MM_DEFAULT = 2000
 
 FONTS_AVAILABLE = ["IBM Plex Sans", "JetBrains Mono", "Noto Sans SC"]
 STARTER_TEMPLATES = ["banner", "blank", "literary", "note", "scroll"]
