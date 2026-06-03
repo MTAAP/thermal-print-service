@@ -20,7 +20,7 @@ Secondary goal: make this the easiest substrate to add new ambient print jobs to
 - Not high-throughput. Designed for ~1–20 print jobs per day, not hundreds per hour.
 - Not multi-user. Single user (me), single printer, multiple senders.
 - Not a beautiful screen UI project. The "frontend" is paper.
-- Not trying to reimplement HTML. The block schema stays flat and small; if a layout needs columns, tables, or wrapping, it doesn't belong on 80mm paper.
+- The JSON block schema is not trying to reimplement HTML. It stays flat and small; if a layout needs columns, tables, or wrapping, it doesn't belong on the JSON path. For the rare cases where typography really does need pixel-level control (custom borders, hand-tuned compositions), the laptop-side `tprint-design` CLI compiles HTML+CSS to a 1-bit PNG and posts it via `/print/raw` — see `design/SKILL.md` and §5.
 
 ## 3. Hardware
 
@@ -82,7 +82,9 @@ The whole assembly is a self-contained appliance. Plug in, connect to WiFi once,
 
 ### Rendering pipeline
 
-The renderer is the single source of typographic truth. Every text block, every glyph, every decorative element is composed in PIL and sent to the printer as raster image data. The printer's native text mode and codepage handling are intentionally unused.
+For documents submitted via `POST /print` (the JSON block path), the Pi-side renderer is the single source of typographic truth. Every text block, every glyph, every decorative element is composed in PIL and sent to the printer as raster image data. The printer's native text mode and codepage handling are intentionally unused.
+
+`POST /print/raw` is the escape hatch: it accepts pre-rasterized 1-bit PNGs from any source (the laptop-side `tprint-design` CLI is the maintained one) and bypasses the block renderer. Senders that use `/print/raw` own their own typography; the Pi's guarantees there are durability, size limits, and idempotency — not typographic consistency.
 
 **Why this commit:**
 - One typography system shared by every sender, regardless of locale or character set. Umlauts, emoji, decorative quotes, mathematical symbols — all pixels, never codepage-dependent.
@@ -163,9 +165,11 @@ Idempotency scope is `(X-Sender || "anonymous", X-Idempotency-Key)`. A byte-iden
 
 ### `POST /print/raw` — escape hatch
 
-For when an agent legitimately needs pixel control (photo prints, generative art, ASCII pieces the schema can't express). Accepts `Content-Type: image/png`, must decode as PNG, and must be exactly 576px wide. Same headers, same idempotency behavior, same durable acceptance rule, but no block-schema validation.
+For when an agent legitimately needs pixel control (photo prints, generative art, ASCII pieces the schema can't express, or HTML+CSS designs compiled by the laptop-side `tprint-design` CLI). Accepts `Content-Type: image/png`, must decode as PNG, and must be exactly 576px wide. Same headers, same idempotency behavior, same durable acceptance rule, but no block-schema validation.
 
 Raw PNGs still pass resource guards before acceptance: `max_request_bytes`, `max_raw_height_px`, and `max_decoded_image_pixels` are service config values. Malformed PNGs return `400`; oversized PNGs return `413`.
+
+The raw path uses fixed job options: `auto_cut=true`, `feed_lines_after=2`, `max_length_mm=2000`, no `expires_at`. The sender cannot override these — designs that need different cut behavior should compose via the block schema. Reprints of raw jobs use the cached PNG only (`/jobs/{id}/reprint?force=json` returns `410`).
 
 ### `GET /schema`
 
