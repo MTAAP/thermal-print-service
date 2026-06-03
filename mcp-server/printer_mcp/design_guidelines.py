@@ -5,12 +5,19 @@ lockstep when the rules change.
 """
 from __future__ import annotations
 
+# Spec-pinned hardware constants, denormalized from printer_core.constants /
+# the thermal-print-service spec. The MCP adapter is a standalone package with
+# no printer-core (and therefore no Pillow) dependency by design — it only
+# talks to the Pi over HTTP — so these four values live here directly rather
+# than importing the rendering core. Keep them in lockstep with
+# printer_core.constants if the geometry ever changes.
 LIVE_WIDTH_PX = 528
 PRINT_HEAD_PX = 576
 DPMM = 8.0
 MAX_LENGTH_MM_DEFAULT = 2000
+
 FONTS_AVAILABLE = ["IBM Plex Sans", "JetBrains Mono", "Noto Sans SC"]
-STARTER_TEMPLATES = ["scroll", "note", "banner", "literary", "blank"]
+STARTER_TEMPLATES = ["banner", "blank", "literary", "note", "scroll"]
 
 RULES_MARKDOWN = """\
 # Thermal design guidelines
@@ -31,6 +38,10 @@ Density: **8 dots/mm** (1 mm = 8 px). Default max length: **2000 mm**.
   with `body { padding: 0 }` to bleed; lint will warn.
 - Watch ink density. A near-empty page (>95% white) probably means
   missing content.
+- Inverse text (white on black) only at display sizes: >= 28 px AND
+  bold. At body sizes the thermal head's lateral heat bleed erodes
+  the white reversal until it's unreadable. Use bordered
+  black-on-white for body-size emphasis instead.
 
 ## Workflow
 

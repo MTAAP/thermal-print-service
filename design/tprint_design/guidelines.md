@@ -16,6 +16,14 @@ Density: **8 dots/mm** (1 mm = 8 px). Default max length: **2000 mm**.
   Override with `body { padding: 0 }` to bleed; lint will warn.
 - **Watch ink density.** A near-empty page (>95% white) probably means
   missing content — lint warns.
+- **Inverse text (white on black) only at display sizes.** Safe at
+  ≥ 28 px **and** bold weight. At body sizes (14–22 px) the print head's
+  lateral heat bleed darkens the surrounding "white" pixels until the
+  reverse is illegible. For body-size emphasis, use bordered
+  black-on-white instead (a thick `border-left` reads as a quote bar;
+  `border: 3px double` reads as a button). This rule is observational —
+  the lint can't catch it because the failure happens at the print
+  head, not the renderer.
 
 ## Workflow
 

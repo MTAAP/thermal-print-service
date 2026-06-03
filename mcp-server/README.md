@@ -113,17 +113,30 @@ fi
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
-# Idempotent clone-or-resync. Hard-resets to the remote tip when the
-# dir is already a clone of this repo — robust to upstream history
-# rewrites (squash merges, fresh-history releases) which would break
-# `pull --ff-only`. If the dir exists but is not a clone of this
-# repo, it is removed and re-cloned from scratch.
+# Idempotent clone-or-resync, refusing to destroy local work.
+#  - If $REPO_DIR is our clone with a clean working tree: fetch + reset
+#    to origin/main (robust to upstream history rewrites that would
+#    break `pull --ff-only`).
+#  - If $REPO_DIR is our clone but has uncommitted changes: STOP. The
+#    user is likely hacking on the checkout; never wipe that silently.
+#  - If $REPO_DIR exists but isn't our clone: STOP. Never `rm -rf` a
+#    directory the script didn't create.
+#  - If $REPO_DIR doesn't exist: clone fresh.
+# Set REPO_DIR=<another path> if you want a separate install.
 if [ -d "$REPO_DIR/.git" ] \
    && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  if [ -n "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then
+    echo "ERROR: $REPO_DIR has uncommitted changes." >&2
+    echo "       Stash/commit them, or set REPO_DIR=<another path> and re-run." >&2
+    exit 1
+  fi
   git -C "$REPO_DIR" fetch --quiet origin
   git -C "$REPO_DIR" reset --hard --quiet origin/main
+elif [ -e "$REPO_DIR" ]; then
+  echo "ERROR: $REPO_DIR exists but is not a clone of $REPO_URL." >&2
+  echo "       Move/remove it manually, or set REPO_DIR=<another path>, then re-run." >&2
+  exit 1
 else
-  rm -rf "$REPO_DIR"
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
@@ -220,17 +233,30 @@ fi
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
-# Idempotent clone-or-resync. Hard-resets to the remote tip when the
-# dir is already a clone of this repo — robust to upstream history
-# rewrites (squash merges, fresh-history releases) which would break
-# `pull --ff-only`. If the dir exists but is not a clone of this
-# repo, it is removed and re-cloned from scratch.
+# Idempotent clone-or-resync, refusing to destroy local work.
+#  - If $REPO_DIR is our clone with a clean working tree: fetch + reset
+#    to origin/main (robust to upstream history rewrites that would
+#    break `pull --ff-only`).
+#  - If $REPO_DIR is our clone but has uncommitted changes: STOP. The
+#    user is likely hacking on the checkout; never wipe that silently.
+#  - If $REPO_DIR exists but isn't our clone: STOP. Never `rm -rf` a
+#    directory the script didn't create.
+#  - If $REPO_DIR doesn't exist: clone fresh.
+# Set REPO_DIR=<another path> if you want a separate install.
 if [ -d "$REPO_DIR/.git" ] \
    && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  if [ -n "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then
+    echo "ERROR: $REPO_DIR has uncommitted changes." >&2
+    echo "       Stash/commit them, or set REPO_DIR=<another path> and re-run." >&2
+    exit 1
+  fi
   git -C "$REPO_DIR" fetch --quiet origin
   git -C "$REPO_DIR" reset --hard --quiet origin/main
+elif [ -e "$REPO_DIR" ]; then
+  echo "ERROR: $REPO_DIR exists but is not a clone of $REPO_URL." >&2
+  echo "       Move/remove it manually, or set REPO_DIR=<another path>, then re-run." >&2
+  exit 1
 else
-  rm -rf "$REPO_DIR"
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
@@ -346,17 +372,30 @@ fi
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
-# Idempotent clone-or-resync. Hard-resets to the remote tip when the
-# dir is already a clone of this repo — robust to upstream history
-# rewrites (squash merges, fresh-history releases) which would break
-# `pull --ff-only`. If the dir exists but is not a clone of this
-# repo, it is removed and re-cloned from scratch.
+# Idempotent clone-or-resync, refusing to destroy local work.
+#  - If $REPO_DIR is our clone with a clean working tree: fetch + reset
+#    to origin/main (robust to upstream history rewrites that would
+#    break `pull --ff-only`).
+#  - If $REPO_DIR is our clone but has uncommitted changes: STOP. The
+#    user is likely hacking on the checkout; never wipe that silently.
+#  - If $REPO_DIR exists but isn't our clone: STOP. Never `rm -rf` a
+#    directory the script didn't create.
+#  - If $REPO_DIR doesn't exist: clone fresh.
+# Set REPO_DIR=<another path> if you want a separate install.
 if [ -d "$REPO_DIR/.git" ] \
    && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  if [ -n "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then
+    echo "ERROR: $REPO_DIR has uncommitted changes." >&2
+    echo "       Stash/commit them, or set REPO_DIR=<another path> and re-run." >&2
+    exit 1
+  fi
   git -C "$REPO_DIR" fetch --quiet origin
   git -C "$REPO_DIR" reset --hard --quiet origin/main
+elif [ -e "$REPO_DIR" ]; then
+  echo "ERROR: $REPO_DIR exists but is not a clone of $REPO_URL." >&2
+  echo "       Move/remove it manually, or set REPO_DIR=<another path>, then re-run." >&2
+  exit 1
 else
-  rm -rf "$REPO_DIR"
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
@@ -458,17 +497,30 @@ fi
 REPO_URL="https://github.com/MTAAP/thermal-print-service.git"
 REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
 
-# Idempotent clone-or-resync. Hard-resets to the remote tip when the
-# dir is already a clone of this repo — robust to upstream history
-# rewrites (squash merges, fresh-history releases) which would break
-# `pull --ff-only`. If the dir exists but is not a clone of this
-# repo, it is removed and re-cloned from scratch.
+# Idempotent clone-or-resync, refusing to destroy local work.
+#  - If $REPO_DIR is our clone with a clean working tree: fetch + reset
+#    to origin/main (robust to upstream history rewrites that would
+#    break `pull --ff-only`).
+#  - If $REPO_DIR is our clone but has uncommitted changes: STOP. The
+#    user is likely hacking on the checkout; never wipe that silently.
+#  - If $REPO_DIR exists but isn't our clone: STOP. Never `rm -rf` a
+#    directory the script didn't create.
+#  - If $REPO_DIR doesn't exist: clone fresh.
+# Set REPO_DIR=<another path> if you want a separate install.
 if [ -d "$REPO_DIR/.git" ] \
    && [ "$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" = "$REPO_URL" ]; then
+  if [ -n "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then
+    echo "ERROR: $REPO_DIR has uncommitted changes." >&2
+    echo "       Stash/commit them, or set REPO_DIR=<another path> and re-run." >&2
+    exit 1
+  fi
   git -C "$REPO_DIR" fetch --quiet origin
   git -C "$REPO_DIR" reset --hard --quiet origin/main
+elif [ -e "$REPO_DIR" ]; then
+  echo "ERROR: $REPO_DIR exists but is not a clone of $REPO_URL." >&2
+  echo "       Move/remove it manually, or set REPO_DIR=<another path>, then re-run." >&2
+  exit 1
 else
-  rm -rf "$REPO_DIR"
   git clone --quiet "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR/mcp-server"
@@ -492,6 +544,46 @@ jq --arg cmd "$MCP_BIN" \
 echo "Done. Restart Claude Desktop (Cmd+Q, reopen) to pick up the new server."
 ```
 
+### Optional: install the design CLI (`tprint-design`)
+
+The MCP server exposes `get_design_guidelines`, which returns a rulebook telling agents to invoke `tprint-design compile`/`print` for HTML-designed prints. The CLI itself is a separate package (lives in `design/` in this repo) and the per-agent installers above intentionally don't pull it — most prints go through the JSON block schema, and the design pipeline drags in Playwright + a ~200 MB Chromium binary.
+
+Run this **after** one of the per-agent install blocks (which clones the repo into `$REPO_DIR`):
+
+```bash
+set -euo pipefail
+
+REPO_DIR="${REPO_DIR:-$HOME/src/thermal-print-service}"
+if [ ! -d "$REPO_DIR" ]; then
+  echo "ERROR: $REPO_DIR doesn't exist — run a per-agent MCP install block first." >&2
+  exit 1
+fi
+
+# Reuse PRINTER_PYTHON if set; otherwise the MCP installer already
+# verified python3 resolves to 3.11+, so trust that here.
+PYTHON="${PRINTER_PYTHON:-python3}"
+
+cd "$REPO_DIR"
+"$PYTHON" -m venv design/.venv
+design/.venv/bin/pip install --quiet --upgrade pip wheel
+design/.venv/bin/pip install --quiet -e ./printer-core
+design/.venv/bin/pip install --quiet -e ./design
+design/.venv/bin/playwright install chromium
+
+# Expose `tprint-design` on PATH so the SKILL.md examples work verbatim.
+# ~/.local/bin is on PATH by default on most Linux + macOS shells; skip
+# the symlink if you'd rather call the venv binary directly.
+mkdir -p "$HOME/.local/bin"
+ln -sf "$REPO_DIR/design/.venv/bin/tprint-design" "$HOME/.local/bin/tprint-design"
+
+# Verify
+"$HOME/.local/bin/tprint-design" info >/dev/null && echo "tprint-design ready."
+```
+
+If `~/.local/bin` isn't on your `$PATH`, either add it (`export PATH="$HOME/.local/bin:$PATH"` in your shell rc) or call the venv binary directly (`$REPO_DIR/design/.venv/bin/tprint-design`).
+
+`tprint-design print` also defaults-deny non-tailnet `PRINT_SERVICE_URL` hosts. Pass `--allow-public-url` (or set `PRINT_SERVICE_ALLOW_PUBLIC_URL=1`) to send to a public host explicitly.
+
 ### Uninstall
 
 ```bash
@@ -508,6 +600,11 @@ openclaw mcp unset printer
 CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 jq 'del(.mcpServers["thermal-printer"])' "$CONFIG" > "$CONFIG.tmp" \
   && mv "$CONFIG.tmp" "$CONFIG"
+
+# Optional design CLI
+rm -f "$HOME/.local/bin/tprint-design"
+# (the repo + venv at $REPO_DIR are shared with the MCP install; remove
+# them only if you're done with the MCP server too)
 ```
 
 ## Manual config (if the agent install doesn't fit)

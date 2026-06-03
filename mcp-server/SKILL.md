@@ -57,7 +57,7 @@ Some shapes the surface accommodates well (not an exhaustive list — invent fre
 
 ## Tools
 
-`print_document(document, idempotency_key?)` — primary tool. Compose a JSON document made of blocks; the Pi renders typesetting and prints. The `document` parameter's full schema is supplied at runtime (the MCP server fetches it from the printer service at boot), so the available block types and their fields are always current. The renderer is the single source of typographic truth.
+`print_document(document, idempotency_key?)` — primary tool. Compose a JSON document made of blocks; the Pi renders typesetting and prints. The `document` parameter's full schema is supplied at runtime (the MCP server fetches it from the printer service at boot), so the available block types and their fields are always current. For documents submitted this way, the Pi-side renderer is the single source of typographic truth — every glyph is composed in PIL, so output looks identical regardless of sender. (The HTML pipeline below uses a different render path with its own typography; reach for it only when the block schema's bounded surface is the limit.)
 
 `print_image(png_base64, idempotency_key?)` — escape hatch for pixel-controlled output (custom dithers, generative art, ASCII pieces the block schema can't express). PNG must be exactly 576px wide.
 
@@ -69,7 +69,7 @@ Some shapes the surface accommodates well (not an exhaustive list — invent fre
 
 `print_test()` — bundled hello-world page exercising every block type. Good for hardware verification after a move.
 
-`get_design_guidelines()` — return the thermal-design rulebook (live print width, DPMM, fonts, lint summary, full `tprint-design` CLI workflow). Call this once at the start of an HTML-design session. The CLI itself runs locally on the user's laptop — see `tprint-design --help`.
+`get_design_guidelines()` — return the thermal-design rulebook (live print width, DPMM, fonts, lint summary, full `tprint-design` CLI workflow). Call this once at the start of an HTML-design session. The CLI itself is a separate install (not bundled with the MCP server because it pulls Playwright + a ~200 MB Chromium binary); if `tprint-design` isn't on PATH, see the **Optional: install the design CLI** section in `mcp-server/README.md` for the one-block setup.
 
 ## When to reach for HTML design vs JSON blocks
 

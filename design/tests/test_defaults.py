@@ -76,3 +76,44 @@ def test_inject_wraps_html_with_no_head():
     assert "<head>" in out
     assert "color: #000000" in out
     assert "<p>hello</p>" in out
+
+
+def test_inject_adds_base_tag_when_source_path_given(tmp_path):
+    src = tmp_path / "design.html"
+    src.write_text("<body><p>x</p></body>")
+    out = defaults.inject_into(src.read_text(), source_path=src)
+    expected = src.parent.resolve().as_uri() + "/"
+    assert f'<base href="{expected}">' in out
+    # base must appear before the reset block so URL-bearing additions
+    # to the injected styles would resolve against it correctly.
+    assert out.index("<base href=") < out.index("color: #000000")
+
+
+def test_inject_skips_base_when_user_has_one(tmp_path):
+    src = tmp_path / "design.html"
+    user_html = (
+        '<head><base href="https://cdn.example.com/"></head>'
+        "<body><p>x</p></body>"
+    )
+    out = defaults.inject_into(user_html, source_path=src)
+    # Only the user's <base> survives; ours is not added.
+    assert out.count("<base ") == 1
+    assert "https://cdn.example.com/" in out
+    assert tmp_path.resolve().as_uri() not in out
+
+
+def test_inject_skips_base_when_no_source_path():
+    html = "<body><p>x</p></body>"
+    out = defaults.inject_into(html)
+    assert "<base " not in out
+
+
+def test_inject_does_not_match_basefont_as_base(tmp_path):
+    # <basefont> is a deprecated but distinct element. A naive `"<base"`
+    # substring check would treat it as an existing <base> and skip our
+    # injection. The pattern requires whitespace or `>` after `base`.
+    src = tmp_path / "design.html"
+    html = "<head><basefont color='red'></head><body>x</body>"
+    out = defaults.inject_into(html, source_path=src)
+    expected = src.parent.resolve().as_uri() + "/"
+    assert f'<base href="{expected}">' in out

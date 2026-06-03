@@ -107,3 +107,79 @@ def test_clean_html_produces_no_pre_render_findings():
     html = "<body><p style='font-size:18px'>hi</p></body>"
     findings = pre_render_lint(html)
     assert findings == []
+
+
+@pytest.mark.slow
+def test_external_import_in_sidecar_stylesheet_flagged(tmp_path):
+    """Regression: a local sidecar stylesheet with @import url(https://...)
+    used to slip past the walker (cssRules access on a sidecar can throw
+    SecurityError, silently skipping the @import). The route handler
+    blocks the fetch but the lint must still surface the finding so
+    rpt.ok is false."""
+    sidecar = tmp_path / "style.css"
+    sidecar.write_text("@import url(https://cdn.example.com/x.css);\n")
+    src = tmp_path / "design.html"
+    src.write_text(
+        '<!doctype html><html><head>'
+        '<link rel="stylesheet" href="./style.css">'
+        '</head><body>hi</body></html>'
+    )
+    findings = pre_render_lint(src.read_text(), source_path=src)
+    assert any(
+        f.rule == "external_resource"
+        and "cdn.example.com" in f.message
+        and f.severity.value == "error"
+        for f in findings
+    ), f"sidecar @import not flagged. findings={findings!r}"
+
+
+@pytest.mark.slow
+def test_inverse_text_small_size_warns():
+    """Regression: a 22 px white-on-black blockquote (the FOLIO landing
+    page bug we hit on paper) must produce an ``inverse_text_too_small``
+    warning so future agents don't print and rediscover the same heat-
+    bleed-erodes-the-reverse failure."""
+    html = (
+        "<!doctype html><html><head><style>"
+        ".q { background: #000; color: #fff; font-size: 22px; "
+        "padding: 10px; }"
+        "</style></head><body><p class='q'>quoted text</p></body></html>"
+    )
+    findings = pre_render_lint(html)
+    assert any(
+        f.rule == "inverse_text_too_small" and f.severity.value == "warning"
+        for f in findings
+    ), f"22px white-on-black not flagged. findings={findings!r}"
+
+
+@pytest.mark.slow
+def test_inverse_text_at_display_size_with_bold_does_not_warn():
+    """The H1 inverse-band aesthetic at 56 px bold (which survived the
+    print head fine) must NOT trigger the warning — the lint targets
+    the body-size failure case only."""
+    html = (
+        "<!doctype html><html><head><style>"
+        ".banner { background: #000; color: #fff; font-size: 56px; "
+        "font-weight: 700; padding: 4px 8px; }"
+        "</style></head><body><h1 class='banner'>SURVIVE</h1></body></html>"
+    )
+    findings = pre_render_lint(html)
+    assert not any(
+        f.rule == "inverse_text_too_small" for f in findings
+    ), f"56px bold white-on-black wrongly flagged. findings={findings!r}"
+
+
+@pytest.mark.slow
+def test_external_resource_inside_media_query_flagged():
+    """Regression: shadows declared inside an @media block were silently
+    accepted because the walker didn't recurse into CSSMediaRule.cssRules."""
+    html = (
+        "<!doctype html><html><head><style>"
+        "@media (max-width: 1000px) { p { text-shadow: 4px 4px #000 } }"
+        "</style></head><body><p>x</p></body></html>"
+    )
+    findings = pre_render_lint(html)
+    assert any(
+        f.rule == "text_shadow"
+        for f in findings
+    ), f"@media-nested text-shadow not flagged. findings={findings!r}"

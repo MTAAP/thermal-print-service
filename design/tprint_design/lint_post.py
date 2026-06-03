@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PIL import Image, ImageChops
 from printer_core.constants import DPMM
+from printer_core.ink import ink_ratio
 
 from tprint_design.lint import LintFinding, LintSeverity
 
@@ -54,7 +55,7 @@ def post_render_lint(
             ),
         ))
 
-    if _ink_ratio(one_bit) < _MOSTLY_EMPTY_RATIO:
+    if ink_ratio(one_bit) < _MOSTLY_EMPTY_RATIO:
         findings.append(LintFinding(
             rule="mostly_empty",
             severity=LintSeverity.WARNING,
@@ -79,13 +80,3 @@ def _has_color(img: Image.Image) -> bool:
     colored_pixels = mask.histogram()[255]
     total = mask.width * mask.height
     return total > 0 and (colored_pixels / total) > _COLOR_RATIO_THRESHOLD
-
-
-def _ink_ratio(img: Image.Image) -> float:
-    if img.mode != "1":
-        img = img.convert("1")
-    total = img.width * img.height
-    if total == 0:
-        return 0.0
-    black = sum(1 for v in img.getdata() if v == 0)  # type: ignore[attr-defined, misc]
-    return black / total

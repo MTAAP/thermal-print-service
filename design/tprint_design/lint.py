@@ -17,6 +17,7 @@ from typing import Any
 
 from PIL import Image
 from printer_core.constants import DPMM
+from printer_core.ink import ink_ratio
 
 
 class LintSeverity(StrEnum):
@@ -75,6 +76,7 @@ class LintReport:
 def lint_html_text(
     html: str,
     *,
+    source_path: Path | None = None,
     rendered_rgb: Image.Image | None = None,
     rendered_one_bit: Image.Image | None = None,
     render_ms: int | None = None,
@@ -90,7 +92,7 @@ def lint_html_text(
     from tprint_design.pi_info import effective_max_length_mm
 
     rpt = LintReport()
-    rpt.extend(pre_render_lint(html))
+    rpt.extend(pre_render_lint(html, source_path=source_path))
     if rendered_rgb is not None and rendered_one_bit is not None:
         cap = effective_max_length_mm(flag_value=max_length_mm_flag)
         rpt.extend(post_render_lint(
@@ -100,27 +102,37 @@ def lint_html_text(
         rpt.stats.update({
             "rendered_height_px": rendered_one_bit.height,
             "estimated_paper_mm": rendered_one_bit.height / DPMM,
-            "ink_pixel_ratio": _ink_ratio(rendered_one_bit),
+            "ink_pixel_ratio": ink_ratio(rendered_one_bit),
         })
     if render_ms is not None:
         rpt.stats["render_ms"] = render_ms
     if blocked_external_requests is not None:
         rpt.stats["blocked_external_requests"] = blocked_external_requests
+        if blocked_external_requests > 0:
+            # A blocked fetch means the render is missing an asset the design
+            # asked for — an external URL, or (since the render sandbox) a
+            # file/symlink resolving outside the source dir. Pre-render lint
+            # only flags http(s)/ws(s) refs, so a relative-looking symlink
+            # slips past it; surface the runtime block as an error too, or
+            # `print` would silently send incomplete output (rpt.ok stays true
+            # on a stat alone).
+            rpt.add(LintFinding(
+                rule="blocked_subresource",
+                severity=LintSeverity.ERROR,
+                message=(
+                    f"{blocked_external_requests} subresource fetch(es) were "
+                    "blocked during render (external URL, or a file/symlink "
+                    "resolving outside the source dir); the output is missing "
+                    "those assets"
+                ),
+            ))
     return rpt
 
 
 def lint_html_file(path: Path, **kwargs: Any) -> LintReport:
-    return lint_html_text(Path(path).read_text(), **kwargs)
-
-
-def _ink_ratio(img: Image.Image) -> float:
-    # Deliberate duplicate of `lint_post._ink_ratio` — same 7-line body,
-    # but extracting it would require a third module (printer-core?) for
-    # marginal benefit. Two copies is fine here.
-    if img.mode != "1":
-        img = img.convert("1")
-    total = img.width * img.height
-    if total == 0:
-        return 0.0
-    black = sum(1 for v in img.getdata() if v == 0)  # type: ignore[attr-defined, misc]
-    return black / total
+    p = Path(path)
+    # Default source_path to the file we just read so relative refs in the
+    # source resolve correctly during the lint pass. An explicit caller
+    # override still wins.
+    kwargs.setdefault("source_path", p)
+    return lint_html_text(p.read_text(), **kwargs)
