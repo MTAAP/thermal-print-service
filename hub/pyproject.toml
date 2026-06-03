@@ -1,0 +1,49 @@
+[project]
+name = "thermal-print-hub"
+version = "0.1.0"
+description = "Public relay hub for the thermal-print friend network"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "sqlalchemy>=2.0",
+  "asyncpg>=0.30",
+  "jsonschema>=4.23",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "httpx>=0.27",
+  "asgi-lifespan>=2.1",
+  "aiosqlite>=0.20",
+  "ruff>=0.7",
+  "mypy>=1.13",
+]
+
+[project.scripts]
+printer-hub = "hub.cli:main"
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hub*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

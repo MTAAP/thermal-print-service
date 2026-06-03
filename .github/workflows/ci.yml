@@ -73,6 +73,33 @@ jobs:
         working-directory: mcp-server
         run: python -m mypy printer_mcp
 
+  hub:
+    name: hub py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install hub
+        run: python -m pip install -e 'hub[dev]'
+      # Hub steps run from hub/ so `import hub` resolves to the package, not the
+      # same-named project dir (which shadows it as a namespace package from the
+      # repo root). Tests run on SQLite, so no Postgres service is needed.
+      - name: Test hub
+        working-directory: hub
+        run: python -m pytest tests
+      - name: Lint hub
+        working-directory: hub
+        run: python -m ruff check hub tests
+      - name: Typecheck hub
+        working-directory: hub
+        run: python -m mypy hub
+
   design:
     name: design py${{ matrix.python-version }}
     runs-on: ubuntu-latest
