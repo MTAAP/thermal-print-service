@@ -21,6 +21,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["printer_core*"]
 
+[tool.setuptools.package-data]
+printer_core = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
