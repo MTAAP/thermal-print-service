@@ -37,6 +37,37 @@ def test_status_prints_snapshot(tmp_path, monkeypatch, capsys):
     assert "queued" in out
 
 
+def test_status_allow_public_url_flag(monkeypatch, capsys):
+    # A user who sent a job to a public host with `print --allow-public-url`
+    # must be able to inspect it with `status --allow-public-url` too.
+    monkeypatch.setenv("PRINT_SERVICE_URL", "https://printer.public.example")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": "pub1", "status": "printed",
+            "sender": "tprint-design", "document_type": "raw",
+            "queued_at": "2026-05-17T12:00:00Z",
+            "printed_at": "2026-05-17T12:00:05Z",
+            "paper_used_mm": 42, "renderer_version": "0.9.1",
+            "reprint_mode": "png_cached", "reprint_url": "/jobs/pub1/reprint",
+        })
+
+    monkeypatch.setattr(
+        "tprint_design.cli._http_client",
+        lambda url: httpx.Client(transport=httpx.MockTransport(handler), base_url=url),
+    )
+    rc = main(["status", "--allow-public-url", "pub1"])
+    assert rc == 0
+    assert "pub1" in capsys.readouterr().out
+
+
+def test_status_rejects_public_url_without_flag(monkeypatch, capsys):
+    monkeypatch.setenv("PRINT_SERVICE_URL", "https://printer.public.example")
+    rc = main(["status", "somejob"])
+    assert rc == 2
+    assert "--allow-public-url" in capsys.readouterr().err
+
+
 def test_status_returns_2_for_missing_job(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("PRINT_SERVICE_URL", "http://printer.test.ts.net")
 

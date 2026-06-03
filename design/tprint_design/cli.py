@@ -98,6 +98,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Fetch the current state of a previously accepted job",
     )
     p_status.add_argument("job_id")
+    p_status.add_argument("--allow-public-url", action="store_true")
     p_status.add_argument("--wait", action="store_true",
                           help="Block until terminal state instead of "
                                "returning the snapshot")
@@ -205,6 +206,13 @@ def _http_client(url: str) -> httpx.Client:
     return httpx.Client(base_url=url, timeout=10.0)
 
 
+# Tailscale assigns node IPs from the CGNAT shared-address range (RFC 6598).
+# Python's ipaddress does not classify these as private/global, so a tailnet
+# host reached by its 100.x address rather than its MagicDNS name would
+# otherwise trip the public-IP guard below.
+_TAILSCALE_CGNAT_V4 = ipaddress.ip_network("100.64.0.0/10")
+
+
 def validate_print_service_url(url: str, *, allow_public: bool) -> str | None:
     """Returns None if the URL is acceptable, else a user-facing error.
 
@@ -241,6 +249,8 @@ def validate_print_service_url(url: str, *, allow_public: bool) -> str | None:
             f"to override."
         )
     if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return None
+    if ip.version == 4 and ip in _TAILSCALE_CGNAT_V4:
         return None
     return (
         f"PRINT_SERVICE_URL host {host} is a public IP. Pass "

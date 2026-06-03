@@ -1,7 +1,11 @@
 import pytest
 from PIL import Image
 
-from tprint_design.render import RenderResult, render_html_to_png
+from tprint_design.render import (
+    RenderResult,
+    _is_allowed_subresource,
+    render_html_to_png,
+)
 
 
 @pytest.mark.slow
@@ -116,4 +120,64 @@ def test_render_blocks_arbitrary_file_uri_outside_source_dir(tmp_path):
     result = render_html_to_png(src.read_text(), source_path=src)
     assert result.blocked_external_requests >= 1, (
         "file:// URI outside source dir was not blocked; exfil channel open"
+    )
+
+
+# --- _is_allowed_subresource (pure allowlist decision, no Playwright) -------
+
+_RENDER_URI = "file:///render/"
+_FONTS_URI = "file:///fonts/"
+
+
+def _allowed(url, *, source_dir_uri=None, source_dir_real=None):
+    return _is_allowed_subresource(
+        url,
+        render_dir_uri=_RENDER_URI,
+        fonts_uri=_FONTS_URI,
+        source_dir_uri=source_dir_uri,
+        source_dir_real=source_dir_real,
+    )
+
+
+def test_allowed_subresource_trusted_prefixes():
+    assert _allowed("data:image/png;base64,AAAA")
+    assert _allowed("file:///render/page.html")
+    assert _allowed("file:///fonts/IBMPlexSans-Bold.ttf")
+
+
+def test_allowed_subresource_blocks_unlisted():
+    assert not _allowed("https://evil.example/x.png")
+    assert not _allowed("file:///etc/passwd")
+
+
+def test_allowed_subresource_allows_real_file_inside_source_dir(tmp_path):
+    src_dir = (tmp_path / "design").resolve()
+    src_dir.mkdir()
+    asset = src_dir / "logo.png"
+    asset.write_bytes(b"\x89PNG")
+    assert _allowed(
+        asset.as_uri(),
+        source_dir_uri=src_dir.as_uri() + "/",
+        source_dir_real=src_dir,
+    )
+
+
+def test_allowed_subresource_blocks_symlink_escaping_source_dir(tmp_path):
+    # A symlink whose URL stays under source_dir_uri but whose target lives
+    # outside the source dir must be blocked — else it reopens the
+    # screenshot-exfil channel the sandbox exists to close.
+    src_dir = (tmp_path / "design").resolve()
+    src_dir.mkdir()
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(b"top secret")
+    link = src_dir / "innocent.png"
+    link.symlink_to(secret)
+
+    src_dir_uri = src_dir.as_uri() + "/"
+    url = link.as_uri()
+    # Precondition: the URL string really is under the allowed source prefix.
+    assert url.startswith(src_dir_uri)
+    # ...but it resolves outside, so it must be blocked.
+    assert not _allowed(
+        url, source_dir_uri=src_dir_uri, source_dir_real=src_dir
     )

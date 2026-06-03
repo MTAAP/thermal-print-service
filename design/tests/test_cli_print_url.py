@@ -18,10 +18,27 @@ FIXTURE = Path(__file__).parent / "fixtures" / "html" / "simple.html"
         "http://192.168.1.42",
         "http://172.20.0.5:8000",
         "https://pi.house.ts.net",
+        # Tailscale CGNAT (100.64.0.0/10) node IPs — reached by address
+        # rather than MagicDNS name.
+        "http://100.64.0.1:8000",
+        "https://100.127.255.254",
     ],
 )
 def test_validate_url_accepts_trusted_targets(url):
     assert validate_print_service_url(url, allow_public=False) is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://100.63.255.255",   # just below the CGNAT block
+        "http://100.128.0.0",      # just above the CGNAT block
+    ],
+)
+def test_validate_url_rejects_addresses_adjacent_to_cgnat(url):
+    # Guard against an over-broad allowlist: only 100.64.0.0/10 is tailnet
+    # shared space; neighbouring public addresses must still be rejected.
+    assert validate_print_service_url(url, allow_public=False) is not None
 
 
 @pytest.mark.parametrize(

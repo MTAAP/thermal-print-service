@@ -19,6 +19,8 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -39,6 +41,41 @@ class RenderResult:
     height: int
     duration_ms: int
     blocked_external_requests: int
+
+
+def _is_allowed_subresource(
+    url: str,
+    *,
+    render_dir_uri: str,
+    fonts_uri: str,
+    source_dir_uri: str | None,
+    source_dir_real: Path | None,
+) -> bool:
+    """Decide whether Chromium may fetch ``url`` during a render.
+
+    Trusted prefixes pass on the URI string alone: ``data:`` URIs, the temp
+    render dir (we write only ``page.html`` there), and the bundled-fonts dir
+    (whose entries are our own symlinks into ``assets/fonts``). The source dir
+    is author-controlled, so a prefix match is not enough — a symlink whose URL
+    stays under ``source_dir_uri`` can resolve to a file *outside* it and leak
+    through the screenshot. For that branch we resolve symlinks and require the
+    real target to stay within the real source dir.
+    """
+    if (
+        url.startswith("data:")
+        or url.startswith(render_dir_uri)
+        or url.startswith(fonts_uri)
+    ):
+        return True
+    if source_dir_uri is None or source_dir_real is None:
+        return False
+    if not url.startswith(source_dir_uri):
+        return False
+    try:
+        target = Path(url2pathname(urlparse(url).path)).resolve()
+    except (ValueError, OSError):
+        return False
+    return target.is_relative_to(source_dir_real)
 
 
 def render_html_to_png(
@@ -87,8 +124,10 @@ def render_html_to_png(
         cleanup_on_failure = out_path
 
     source_dir_uri: str | None = None
+    source_dir_real: Path | None = None
     if source_path is not None:
-        source_dir_uri = source_path.resolve().parent.as_uri() + "/"
+        source_dir_real = source_path.resolve().parent
+        source_dir_uri = source_dir_real.as_uri() + "/"
 
     try:
         with tempfile.TemporaryDirectory() as render_td:
@@ -100,20 +139,18 @@ def render_html_to_png(
 
             def _route(route):
                 nonlocal blocked
-                url = route.request.url
-                # Allowlist: data:, the render dir (where page.html lives),
-                # the bundled-fonts dir (so @font-face URLs reach), and the
-                # source dir (so <base href> resolves ./ refs). Everything
-                # else — arbitrary file://, http(s), ws, blob: — is blocked
-                # to neuter the screenshot-exfil channel.
-                if (
-                    url.startswith("data:")
-                    or url.startswith(render_dir_uri)
-                    or url.startswith(fonts_uri)
+                # Allowlist: data:, the render dir (where page.html lives), the
+                # bundled-fonts dir (so @font-face URLs reach), and the source
+                # dir (so <base href> resolves ./ refs — symlink-checked).
+                # Everything else — arbitrary file://, http(s), ws, blob: — is
+                # blocked to neuter the screenshot-exfil channel.
+                if _is_allowed_subresource(
+                    route.request.url,
+                    render_dir_uri=render_dir_uri,
+                    fonts_uri=fonts_uri,
+                    source_dir_uri=source_dir_uri,
+                    source_dir_real=source_dir_real,
                 ):
-                    route.continue_()
-                    return
-                if source_dir_uri is not None and url.startswith(source_dir_uri):
                     route.continue_()
                     return
                 blocked += 1
