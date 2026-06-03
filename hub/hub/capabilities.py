@@ -41,6 +41,20 @@ async def schema_for_recipient(session: AsyncSession, recipient_id: str) -> dict
     return cap.blocks_schema if cap else None
 
 
+async def capability_for_recipient(
+    session: AsyncSession, recipient_id: str
+) -> tuple[str | None, dict | None, list]:
+    """(renderer_version, blocks_schema, block_types). Nulls when the printer
+    exists but has not reported capabilities yet."""
+    p = await session.get(Printer, recipient_id)
+    if p is None or p.renderer_version is None:
+        return None, None, []
+    cap = await session.get(Capability, p.renderer_version)
+    if cap is None:
+        return p.renderer_version, None, []
+    return p.renderer_version, cap.blocks_schema, cap.block_types
+
+
 def validate_document(blocks_schema: dict, document: dict) -> None:
     """Approximation of the Pi's Pydantic validation (§6.2). The Pi validator
     stays authoritative; this catches the common, cheap cases at send time."""
