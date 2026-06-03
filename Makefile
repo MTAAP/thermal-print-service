@@ -1,4 +1,4 @@
-.PHONY: verify test lint typecheck core-test core-lint core-typecheck service-test mcp-test service-lint mcp-lint service-typecheck mcp-typecheck design-test design-test-all design-lint design-typecheck
+.PHONY: verify verify-all test test-all lint typecheck core-test core-lint core-typecheck service-test mcp-test service-lint mcp-lint service-typecheck mcp-typecheck design-test design-test-all design-lint design-typecheck
 
 CORE_PY ?= printer-core/.venv/bin/python
 SERVICE_PY ?= service/.venv/bin/python
@@ -7,7 +7,14 @@ DESIGN_PY ?= design/.venv/bin/python
 
 verify: test lint typecheck
 
+# Full gate — runs the slow Playwright design tests too. Use before
+# pushing to main; the fast `verify` target excludes them so the local
+# loop stays under a few seconds.
+verify-all: test-all lint typecheck
+
 test: core-test service-test mcp-test design-test
+
+test-all: core-test service-test mcp-test design-test-all
 
 lint: core-lint service-lint mcp-lint design-lint
 
@@ -38,7 +45,7 @@ service-typecheck:
 	$(SERVICE_PY) -m mypy --config-file service/pyproject.toml service/printer
 
 mcp-typecheck:
-	$(MCP_PY) -m mypy mcp-server/printer_mcp
+	$(MCP_PY) -m mypy --config-file mcp-server/pyproject.toml mcp-server/printer_mcp
 
 design-test:
 	$(DESIGN_PY) -m pytest design/tests -m "not slow"

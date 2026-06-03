@@ -74,6 +74,7 @@ fi
 echo "==> ensure venv + service deps"
 as_service_user python3 -m venv "${APP_DIR}/.venv"
 as_service_user "${APP_DIR}/.venv/bin/pip" install --upgrade pip wheel
+as_service_user "${APP_DIR}/.venv/bin/pip" install -e "${APP_DIR}/printer-core"
 as_service_user "${APP_DIR}/.venv/bin/pip" install -e "${APP_DIR}/service"
 
 echo "==> install service unit"
