@@ -74,6 +74,15 @@ async def test_ttl_expiry_marks_relay_expired(sm):
         assert (await s.get(Job, j.id)).state == "relay_expired"
 
 
+async def test_ack_is_idempotent(sm):
+    async with sm() as s:
+        j = await _queued(s)
+        await lease_next(s, recipient_id="prn_bob", poll_id="p1", visibility_s=60)
+        assert await ack_delivered(s, job_id=j.id, poll_id="p1") is True
+        # re-ack of an already-delivered job succeeds (idempotent), not 409
+        assert await ack_delivered(s, job_id=j.id, poll_id="p1") is True
+
+
 async def test_report_terminal_maps_local_unknown_partial(sm):
     async with sm() as s:
         j = await _queued(s)

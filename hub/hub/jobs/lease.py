@@ -53,7 +53,11 @@ async def ack_delivered(session: AsyncSession, *, job_id: str, poll_id: str) -> 
         ),
     )
     await session.commit()
-    return res.rowcount == 1
+    if res.rowcount == 1:
+        return True
+    # Idempotent: a re-ack of an already-delivered job is a success, not 409.
+    job = await session.get(Job, job_id)
+    return job is not None and job.state == "delivered"
 
 
 async def report_terminal(session: AsyncSession, *, job_id: str, status: str) -> bool:
