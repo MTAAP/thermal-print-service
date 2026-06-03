@@ -134,11 +134,15 @@ def test_client_transport_failure_raises_print_service_error_with_status_zero(cf
     assert "could not reach print service" in exc_info.value.message
 
 
-def test_decode_png_base64_rejects_garbage():
+def _client_with_cap(cap: int = 8 * 1024 * 1024):
     from printer_mcp.client import PrintServiceClient
+    from printer_mcp.config import McpConfig
+    return PrintServiceClient(McpConfig(max_print_image_bytes=cap))
 
+
+def test_decode_png_base64_rejects_garbage():
     with pytest.raises(PrintServiceError) as exc_info:
-        PrintServiceClient.decode_png_base64("not-base64!!!")
+        _client_with_cap().decode_png_base64("not-base64!!!")
     assert exc_info.value.status == 400
     assert "valid base64" in exc_info.value.message
 
@@ -146,8 +150,21 @@ def test_decode_png_base64_rejects_garbage():
 def test_decode_png_base64_round_trips():
     import base64
 
-    from printer_mcp.client import PrintServiceClient
-
     raw = b"\x89PNG\r\n\x1a\nXYZ"
     encoded = base64.b64encode(raw).decode("ascii")
-    assert PrintServiceClient.decode_png_base64(encoded) == raw
+    assert _client_with_cap().decode_png_base64(encoded) == raw
+
+
+def test_decode_png_base64_rejects_oversized_payload_before_decoding():
+    # Cap to 100 bytes; build a base64 string that decodes to ~1 KB.
+    # Without the pre-decode cap, base64.b64decode would burn 1 KB of RSS
+    # before any cap check could fire. With the cap, we reject early.
+    import base64
+
+    client = _client_with_cap(cap=100)
+    raw = b"\x00" * 1024
+    encoded = base64.b64encode(raw).decode("ascii")
+    with pytest.raises(PrintServiceError) as exc_info:
+        client.decode_png_base64(encoded)
+    assert exc_info.value.status == 413
+    assert "exceeds 100-byte cap" in exc_info.value.message

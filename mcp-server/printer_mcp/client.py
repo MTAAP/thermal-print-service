@@ -68,8 +68,21 @@ class PrintServiceClient:
         params = {"force": "json"} if force_json else None
         return await self._post_json(f"/jobs/{job_id}/reprint", params=params)
 
-    @staticmethod
-    def decode_png_base64(data: str) -> bytes:
+    def decode_png_base64(self, data: str) -> bytes:
+        # Reject oversized payloads BEFORE decoding so a huge agent-supplied
+        # string never lands as full RSS. Base64 encodes 3 bytes per 4
+        # chars (+ padding), so the decoded size is at most ``len(data) *
+        # 3 // 4``. A char-length cap is the tightest pre-decode bound.
+        cap = self._cfg.max_print_image_bytes
+        max_chars = (cap * 4) // 3 + 4
+        if len(data) > max_chars:
+            raise PrintServiceError(
+                status=413,
+                message=(
+                    f"png_base64 exceeds {cap}-byte cap "
+                    f"(set PRINT_MAX_IMAGE_BYTES to raise it)"
+                ),
+            )
         try:
             return base64.b64decode(data, validate=True)
         except (base64.binascii.Error, ValueError) as exc:  # type: ignore[attr-defined]

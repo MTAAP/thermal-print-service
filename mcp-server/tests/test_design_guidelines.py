@@ -29,9 +29,9 @@ def test_get_design_guidelines_appears_in_tool_list(cfg, sample_schema_payload):
 
 def test_call_get_design_guidelines_returns_static_payload(cfg, sample_schema_payload):
     """The tool returns the static rulebook with no Pi round-trip — the
-    handler below intentionally has no design-related route, and the test
-    still passes because the payload is duplicated locally (architectural
-    constraint: mcp-server's venv does not import tprint_design)."""
+    handler below intentionally has no design-related route. Geometry
+    constants are imported from printer_core, so this test also pins the
+    cross-package contract between mcp-server and printer-core."""
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/schema":
             return httpx.Response(200, json=sample_schema_payload)

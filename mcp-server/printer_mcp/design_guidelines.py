@@ -5,12 +5,19 @@ lockstep when the rules change.
 """
 from __future__ import annotations
 
-LIVE_WIDTH_PX = 528
-PRINT_HEAD_PX = 576
-DPMM = 8.0
-MAX_LENGTH_MM_DEFAULT = 2000
+from printer_core.constants import (
+    DPMM,
+    LIVE_WIDTH_PX,
+    MAX_LENGTH_MM_DEFAULT,
+    PRINT_HEAD_WIDTH_PX,
+)
+
+# Re-export under the payload-key-shaped name so callers reading the
+# MCP tool output and the local constant pair up at a glance.
+PRINT_HEAD_PX = PRINT_HEAD_WIDTH_PX
+
 FONTS_AVAILABLE = ["IBM Plex Sans", "JetBrains Mono", "Noto Sans SC"]
-STARTER_TEMPLATES = ["scroll", "note", "banner", "literary", "blank"]
+STARTER_TEMPLATES = ["banner", "blank", "literary", "note", "scroll"]
 
 RULES_MARKDOWN = """\
 # Thermal design guidelines
@@ -31,6 +38,10 @@ Density: **8 dots/mm** (1 mm = 8 px). Default max length: **2000 mm**.
   with `body { padding: 0 }` to bleed; lint will warn.
 - Watch ink density. A near-empty page (>95% white) probably means
   missing content.
+- Inverse text (white on black) only at display sizes: >= 28 px AND
+  bold. At body sizes the thermal head's lateral heat bleed erodes
+  the white reversal until it's unreadable. Use bordered
+  black-on-white for body-size emphasis instead.
 
 ## Workflow
 

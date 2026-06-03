@@ -29,6 +29,12 @@ class McpConfig:
     # but tools that need the schema return a clear "service unreachable"
     # error until the next successful refresh).
     schema_boot_retry_s: float = 5.0
+    # Cap on the decoded byte length of a ``print_image`` payload.
+    # The Pi has its own ``max_request_bytes`` cap (default 8 MB) but
+    # the MCP server decodes the base64 in-process first — without a
+    # cap here, a multi-hundred-MB agent-supplied string lands as RSS
+    # before the service cap fires. Match the Pi default by default.
+    max_print_image_bytes: int = 8 * 1024 * 1024
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> McpConfig:
@@ -40,5 +46,8 @@ class McpConfig:
             timeout_s=float(e.get("PRINT_TIMEOUT_S", cls.timeout_s)),
             schema_boot_retry_s=float(
                 e.get("PRINT_SCHEMA_BOOT_RETRY_S", cls.schema_boot_retry_s)
+            ),
+            max_print_image_bytes=int(
+                e.get("PRINT_MAX_IMAGE_BYTES", cls.max_print_image_bytes)
             ),
         )
