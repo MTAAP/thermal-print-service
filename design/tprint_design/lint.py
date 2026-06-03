@@ -108,6 +108,24 @@ def lint_html_text(
         rpt.stats["render_ms"] = render_ms
     if blocked_external_requests is not None:
         rpt.stats["blocked_external_requests"] = blocked_external_requests
+        if blocked_external_requests > 0:
+            # A blocked fetch means the render is missing an asset the design
+            # asked for — an external URL, or (since the render sandbox) a
+            # file/symlink resolving outside the source dir. Pre-render lint
+            # only flags http(s)/ws(s) refs, so a relative-looking symlink
+            # slips past it; surface the runtime block as an error too, or
+            # `print` would silently send incomplete output (rpt.ok stays true
+            # on a stat alone).
+            rpt.add(LintFinding(
+                rule="blocked_subresource",
+                severity=LintSeverity.ERROR,
+                message=(
+                    f"{blocked_external_requests} subresource fetch(es) were "
+                    "blocked during render (external URL, or a file/symlink "
+                    "resolving outside the source dir); the output is missing "
+                    "those assets"
+                ),
+            ))
     return rpt
 
 
