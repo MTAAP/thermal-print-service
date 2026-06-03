@@ -58,3 +58,21 @@ async def test_duplicate_handle_rejected(sm):
         code = await create_invite(s, issuer_printer_id=None, ttl_s=3600)
         with pytest.raises(InviteError):
             await redeem_invite(s, code=code, handle="alice", display_name="A2")
+
+
+async def test_friendship_records_origin_invite_id(sm):
+    from hub.friends import list_friends
+    async with sm() as s:
+        alice = await redeem_invite(
+            s, code=await create_invite(s, issuer_printer_id=None, ttl_s=3600),
+            handle="alice", display_name="Alice")
+        code = await create_invite(s, issuer_printer_id=alice.printer_id, ttl_s=3600)
+        from hub.auth import hash_token
+        from hub.models import Invite
+        inv = await s.get(Invite, hash_token(code))
+        await redeem_invite(s, code=code, handle="bob", display_name="Bob")
+
+        # alice's view of bob carries the originating invite id
+        friends = await list_friends(s, alice.printer_id, online_ids=set())
+        assert friends[0].handle == "bob"
+        assert friends[0].via_invite_id == inv.id

@@ -23,18 +23,19 @@ async def list_friends(
 ) -> list[FriendOut]:
     rows = (
         await session.execute(
-            select(Printer)
+            select(Printer, Friendship.origin_invite_id)
             .join(Friendship, Friendship.friend_id == Printer.id)
             .where(Friendship.owner_id == owner_id)
             .order_by(Printer.handle)
         )
-    ).scalars().all()
+    ).all()
     return [
         FriendOut(
             handle=p.handle, display_name=p.display_name,
             renderer_version=p.renderer_version, online=p.id in online_ids,
+            via_invite_id=origin_invite_id,
         )
-        for p in rows
+        for p, origin_invite_id in rows
     ]
 
 

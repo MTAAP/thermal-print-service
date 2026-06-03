@@ -25,6 +25,7 @@ async def create_invite(
 ) -> str:
     code = new_invite_code()
     session.add(Invite(
+        id=new_id("inv"),
         code_hash=hash_token(code),
         issuer_printer_id=issuer_printer_id,
         redeemed_by=None,
@@ -79,8 +80,10 @@ async def redeem_invite(
         ).scalar_one()
         inviter_handle = issuer.handle
         # Mutual friendship: two ordered rows.
-        session.add(Friendship(owner_id=issuer.id, friend_id=printer.id, created_at=_now()))
-        session.add(Friendship(owner_id=printer.id, friend_id=issuer.id, created_at=_now()))
+        session.add(Friendship(owner_id=issuer.id, friend_id=printer.id,
+                               origin_invite_id=inv.id, created_at=_now()))
+        session.add(Friendship(owner_id=printer.id, friend_id=issuer.id,
+                               origin_invite_id=inv.id, created_at=_now()))
 
     inv.redeemed_by = printer.id
     await session.commit()

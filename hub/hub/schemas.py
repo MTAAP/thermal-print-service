@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class CreateInviteResp(BaseModel):
     code: str
+    invite_id: str
     expires_at: str
 
 
@@ -29,6 +30,7 @@ class FriendOut(BaseModel):
     display_name: str
     renderer_version: str | None
     online: bool
+    via_invite_id: str | None = None
 
 
 class SendReq(BaseModel):

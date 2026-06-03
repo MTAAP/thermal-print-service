@@ -31,6 +31,9 @@ class Token(Base):
 class Invite(Base):
     __tablename__ = "invites"
     code_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    # Stable, non-secret handle the relay records locally to gate auto-allow-listing
+    # (relay §5); separate from the secret code_hash PK.
+    id: Mapped[str] = mapped_column(String, unique=True, index=True)
     # issuer null == admin bootstrap (creates a printer with no inviter friendship)
     issuer_printer_id: Mapped[str | None] = mapped_column(
         ForeignKey("printers.id"), nullable=True
@@ -49,6 +52,9 @@ class Friendship(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("printers.id"), index=True)
     friend_id: Mapped[str] = mapped_column(ForeignKey("printers.id"), index=True)
+    # The invite this friendship was redeemed from, so the relay can match it
+    # against the invite ids it issued locally (relay §5). Null for legacy rows.
+    origin_invite_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

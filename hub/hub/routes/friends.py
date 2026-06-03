@@ -47,4 +47,4 @@ async def member_invite(request: Request, authorization: str | None = Header(def
         from hub.models import Invite
         inv = await s.get(Invite, hash_token(code))
         assert inv is not None  # just committed in this session
-        return CreateInviteResp(code=code, expires_at=inv.expires_at.isoformat())
+        return CreateInviteResp(code=code, invite_id=inv.id, expires_at=inv.expires_at.isoformat())
