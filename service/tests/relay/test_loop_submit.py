@@ -5,7 +5,7 @@ from printer_core.constants import PRINT_HEAD_WIDTH_PX
 
 from printer.relay.config import RelayConfig
 from printer.relay.hub_client import HubClient
-from printer.relay.local_client import LocalClient
+from printer.relay.local_client import LocalClient, SubmitOutcome, SubmitResult
 from printer.relay.loop import RelayClient
 from printer.relay.store import AllowList, JobMap
 
@@ -79,3 +79,50 @@ async def test_raw_png_band_submitted_and_printed(relay_paths, mock_hub, hub_htt
         await client.join_watchers()  # drain background watch before asserting
     assert mock_hub.acked == ["hjraw"]
     assert ("hjraw", "printed") in mock_hub.statuses
+
+
+class _CountingLocal:
+    """Counts how many times a job was actually submitted to the local printer."""
+
+    def __init__(self) -> None:
+        self.submits = 0
+
+    async def print_document(self, document, *, sender, idempotency_key):
+        self.submits += 1
+        return SubmitResult(SubmitOutcome.ACCEPTED, local_job_id="loc1")
+
+    async def print_raw(self, png_bytes, *, sender, idempotency_key):
+        self.submits += 1
+        return SubmitResult(SubmitOutcome.ACCEPTED, local_job_id="loc1")
+
+    async def get_job_status(self, local_job_id):
+        return "printed"
+
+
+async def test_redelivered_hub_job_is_not_reprinted(relay_paths, mock_hub, hub_http):
+    """A hub redelivery of an already-delivered job (its JobMap entry survives the
+    local idempotency TTL) must re-ack and re-report -- never reprint (finding 2)."""
+    cfg = _cfg(relay_paths)
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    local = _CountingLocal()
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+    job = {
+        "job_id": "hj1", "sender": "alice", "kind": "document",
+        "sent_at": "2026-06-03T14:32:00+00:00",
+        "payload": {"document": {"blocks": [{"type": "paragraph", "text": "hi"}]}},
+    }
+    await client.process_job(job)
+    await client.join_watchers()  # background watch reports printed + marks the map
+    # Same job redelivered by the hub.
+    await client.process_job(job)
+    await client.join_watchers()
+    # Printed exactly once; the redelivery took the durable-dedup path.
+    assert local.submits == 1
+    # Re-acked (idempotent) so the hub stops redelivering, and re-reported printed.
+    assert mock_hub.acked == ["hj1", "hj1"]
+    assert ("hj1", "printed") in mock_hub.statuses

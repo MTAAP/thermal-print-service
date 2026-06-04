@@ -37,6 +37,21 @@ class PerFriendRateLimiter:
         now = _epoch(sent_at)
         cutoff = now - 3600.0
         window = [t for t in self._hits.get(handle, []) if t > cutoff]
+        # Idempotent by sent_at: a single job occupies at most one window slot no
+        # matter how many times it is redelivered. sent_at is the hub's immutable,
+        # microsecond-precision timestamp (not sender-controlled), so within one
+        # sender bucket an exact match means the SAME job is being re-evaluated --
+        # e.g. a QUEUE_FULL outcome left it leased and the hub redelivered it.
+        # Counting that twice would let an unprinted, retrying job eventually trip
+        # its own limit and become rejected_rate_limited. This is what the class
+        # docstring's "same job allowed/denied identically" guarantee requires.
+        # Bound: two GENUINELY distinct jobs could share a sent_at only via a
+        # duplicate-recipient send (to=["bob","bob"]) reaching one relay; deduping
+        # that to a single slot is a negligible (and arguably correct) under-count.
+        if now in window:
+            self._hits[handle] = window
+            self._flush()
+            return True
         if len(window) >= self._per_hour:
             self._hits[handle] = window
             self._flush()

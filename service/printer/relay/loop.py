@@ -67,6 +67,29 @@ class RelayClient:
         if not isinstance(hub_job_id, str) or not hub_job_id:
             logger.error("relay: inbox job missing job_id; dropping: %r", job)
             return
+
+        # Durable dedup BEFORE re-submitting (finding: relay redelivery double-
+        # print). The local /print idempotency layer keys on this hub_job_id, but
+        # that layer has a TTL while the JobMap is permanent (append-only JSONL).
+        # After a long outage or a lost ack, the hub can redeliver a job whose
+        # local idempotency record has already aged out -- resubmitting then
+        # reprints. If the JobMap already knows this hub_job_id, the job was
+        # already delivered locally: re-ack (idempotent on the hub) and re-report
+        # its status instead of printing it again.
+        #
+        # Residual: a crash in the microsecond window between _submit returning
+        # 202 and _on_accepted's synchronous jobmap.put leaves NO JobMap entry, so
+        # a redelivery falls through to _submit. That re-submit carries the same
+        # hub_job_id idempotency key, so the local layer dedups it -- a reprint
+        # only happens if the outage also outlived the local idempotency TTL. That
+        # window is bounded and acceptable for this service; closing it fully would
+        # need a pre-submit intent record that can't carry the not-yet-known
+        # local_job_id and would mis-report status.
+        prior = self._jobmap.get(hub_job_id)
+        if prior is not None:
+            await self._redeliver_known(hub_job_id, prior)
+            return
+
         sender = job.get("sender")
         sent_at = job.get("sent_at")
         if not isinstance(sender, str) or not isinstance(sent_at, str):
@@ -85,12 +108,24 @@ class RelayClient:
             await self._hub.post_status(hub_job_id, "rejected_rate_limited")
             return
 
-        # Transform (spec 7.2/7.4) + submit. A malformed payload (missing keys,
-        # bad base64) surfaces as KeyError/ValueError -> deterministic failure, so
-        # the poison job becomes terminal rather than redelivering forever.
+        # Transform (spec 7.2/7.4) + submit. A malformed inbox payload is a
+        # DETERMINISTIC client error -> mark the job failed (terminal) so it never
+        # redelivers. The caught tuple is exactly the shape/decode errors _submit
+        # can raise on untrusted hub JSON:
+        #   ValueError     - bad base64 (binascii.Error subclasses it), an
+        #                    undecodable image (normalized in composite_from_band),
+        #                    a wrong-width raster.
+        #   KeyError       - a payload dict missing "document"/"raw_png_b64".
+        #   TypeError      - a non-str raw_png_b64, or a None/list payload that
+        #                    breaks subscripting/decoding.
+        #   AttributeError - a None document reaching from_header_block.
+        # It deliberately EXCLUDES httpx errors: a transient local-service outage
+        # raises httpx.HTTPError (not any of these), so it falls through to
+        # run_forever's backoff/retry path -- we never mark a job failed merely
+        # because the printer was briefly unreachable.
         try:
             result = await self._submit(job, hub_job_id, sender, sent_at)
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             logger.warning("relay: transform rejected/malformed job %s: %s", hub_job_id, exc)
             await self._hub.post_status(hub_job_id, "failed")
             return
@@ -200,6 +235,25 @@ class RelayClient:
         # Snapshot: the done-callback mutates the set as tasks finish.
         for task in list(self._watch_tasks):
             await asyncio.gather(task, return_exceptions=True)
+
+    async def _redeliver_known(self, hub_job_id: str, prior: dict[str, str]) -> None:
+        """Handle a redelivery of a job already in the JobMap WITHOUT reprinting.
+
+        Re-ack so the hub stops redelivering even if our earlier ack was the lost
+        message, then re-report terminal status (same status-mapping as
+        replay_unfinished). A still-in-progress local job is left for the next
+        replay_unfinished cycle to finish, exactly as a timed-out watch would be."""
+        assert self._hub is not None and self._local is not None
+        local_job_id = prior["local_job_id"]
+        # The hub ack is idempotent: re-acking an already-delivered job returns
+        # {ok: true}, so this never raises even if the original ack succeeded.
+        await self._hub.ack(hub_job_id)
+        status = await self._local.get_job_status(local_job_id)
+        if status is None:
+            await self._report_terminal(hub_job_id, local_job_id, "printer_expired")
+        elif status in _LOCAL_TERMINAL:
+            await self._report_terminal(hub_job_id, local_job_id, _LOCAL_TO_HUB[status])
+        # else still queued/printing: replay_unfinished re-reports next cycle.
 
     # ----- startup replay (spec 7.3) -----
 

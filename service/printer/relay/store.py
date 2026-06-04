@@ -115,11 +115,26 @@ class JobMap:
                 line = line.strip()
                 if not line:
                     continue
-                rec = json.loads(line)
-                self._state[rec["hub_job_id"]] = {
-                    "local_job_id": rec["local_job_id"],
-                    "last_status": rec["last_status"],
-                }
+                # Tolerate a torn or malformed line instead of refusing to start:
+                # crashing here would strand EVERY delivered job -- a far worse
+                # failure than dropping one record. A power cut can leave a
+                # partially-written trailing append. If the torn line is an UPDATE
+                # to a job that has an earlier good line, the job reverts to that
+                # earlier (still-unfinished) status and replay re-reports it --
+                # safe. If the torn line is a job's SOLE record (a crash during the
+                # put-before-ack in _on_accepted), that job is forgotten here; a
+                # later hub redelivery is then deduped by the local /print
+                # idempotency layer, and only double-prints if the outage outlived
+                # that layer's TTL -- the same bounded crash window as the
+                # submit/persist gap. Mirrors the main joblog's bad-line tolerance.
+                try:
+                    rec = json.loads(line)
+                    self._state[rec["hub_job_id"]] = {
+                        "local_job_id": rec["local_job_id"],
+                        "last_status": rec["last_status"],
+                    }
+                except (ValueError, KeyError, TypeError):
+                    continue
 
     def put(self, hub_job_id: str, *, local_job_id: str, last_status: str) -> None:
         rec = {

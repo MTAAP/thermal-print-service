@@ -52,6 +52,21 @@ async def test_invite_single_use_and_expiry(sm):
             await redeem_invite(s, code=expired, handle="dave", display_name="D")
 
 
+async def test_reused_invite_creates_no_second_printer(sm):
+    # Single-use at the side-effect level: a second redeem of a claimed invite
+    # raises AND creates no second printer/token-pair from the one invite. This
+    # verifies the serial PROPERTY (the redeemed_by guard); the FOR UPDATE row
+    # lock that makes it hold under CONCURRENT redeems is a Postgres-only no-op on
+    # this serial SQLite harness, so that hardening is not exercised here.
+    async with sm() as s:
+        code = await create_invite(s, issuer_printer_id=None, ttl_s=3600)
+        await redeem_invite(s, code=code, handle="alice", display_name="Alice")
+        with pytest.raises(InviteError):
+            await redeem_invite(s, code=code, handle="bob", display_name="Bob")
+        printers = (await s.execute(select(Printer))).scalars().all()
+        assert [p.handle for p in printers] == ["alice"]
+
+
 async def test_duplicate_handle_rejected(sm):
     async with sm() as s:
         await _printer(s, "alice")

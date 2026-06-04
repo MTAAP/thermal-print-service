@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CreateInviteResp(BaseModel):
@@ -48,6 +50,27 @@ class SendReq(BaseModel):
     document: dict[str, Any] | None = None
     raw_png_b64: str | None = None
     idempotency_key: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_payload(self) -> SendReq:
+        # A job carries EITHER a document OR a raw PNG, never both and never
+        # neither. Test with TRUTHINESS, not `is None`: send_document branches on
+        # truthiness too (`"raw" if raw_png_b64 else "document"`), so the two
+        # layers MUST agree on the empty cases. An identity check would let
+        # raw_png_b64="" (or document={}) slip through here, then send_document
+        # would treat it as the OTHER kind and queue {"document": None} -- an empty
+        # job that crashes the recipient's relay. Rejecting at the request boundary
+        # turns it into a clean 422, not a silently-broken queued job.
+        if bool(self.document) == bool(self.raw_png_b64):
+            raise ValueError("provide exactly one of `document` or `raw_png_b64`")
+        if self.raw_png_b64:
+            # Validate the base64 here so a malformed blob is a 422 at send time,
+            # not a decode crash on the recipient's relay much later.
+            try:
+                base64.b64decode(self.raw_png_b64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError(f"raw_png_b64 is not valid base64: {exc}") from exc
+        return self
 
 
 class SendResult(BaseModel):

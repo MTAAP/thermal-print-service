@@ -66,7 +66,17 @@ def composite_from_band(
 
     Width must stay exactly PRINT_HEAD_WIDTH_PX and band+image height must stay
     within max_raw_height_px (the local /print/raw 400/413s otherwise)."""
-    src = Image.open(io.BytesIO(png_bytes)).convert("L")
+    # A friend's raw payload is untrusted bytes. Decode failures must surface as
+    # ValueError -- the deterministic "malformed payload" contract process_job
+    # catches to mark the job terminally failed -- NOT as an OSError that escapes
+    # into the run_forever backoff loop and redelivers the poison forever.
+    # UnidentifiedImageError is an OSError; a decompression bomb is a
+    # DecompressionBombError (neither a ValueError nor an OSError); a truncated
+    # PNG raises OSError on access. Normalize them all here.
+    try:
+        src = Image.open(io.BytesIO(png_bytes)).convert("L")
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError(f"raw payload is not a decodable image: {exc}") from exc
     if src.width != PRINT_HEAD_WIDTH_PX:
         raise ValueError(f"raw image must be exactly {PRINT_HEAD_WIDTH_PX}px wide")
     total_h = _BAND_HEIGHT_PX + src.height

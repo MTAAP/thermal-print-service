@@ -101,6 +101,80 @@ async def test_malformed_job_is_marked_failed_not_crashed(
     assert mock_hub.acked == []  # poison jobs are never acked
 
 
+async def test_undecodable_raw_payload_marked_failed_not_looped(
+    relay_paths, mock_hub, hub_http, fake_deps
+):
+    """A raw job whose base64 decodes but is not a valid image must become
+    terminal 'failed', never escape as an OSError into the backoff loop and
+    redeliver forever (finding 8)."""
+    import base64
+
+    from printer.relay.hub_client import HubClient
+    from printer.relay.local_client import LocalClient
+    from tests.conftest import lifespan_client
+
+    cfg = _cfg(relay_paths)
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    async with lifespan_client(fake_deps) as local_ac:
+        client = RelayClient(
+            cfg, relay_paths,
+            hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+            local=LocalClient(local_ac),
+        )
+        bad = base64.b64encode(b"definitely not a png").decode()
+        await client.process_job({
+            "job_id": "hj-rawbad", "sender": "alice", "kind": "raw",
+            "sent_at": "2026-06-03T14:00:00+00:00",
+            "payload": {"raw_png_b64": bad},
+        })
+    assert ("hj-rawbad", "failed") in mock_hub.statuses
+    assert mock_hub.acked == []
+
+
+async def test_malformed_payload_shapes_marked_failed_not_looped(
+    relay_paths, mock_hub, hub_http, fake_deps
+):
+    """Payloads with a wrong SHAPE -- a non-str raw_png_b64, a None document, a
+    None payload -- raise TypeError/AttributeError inside _submit. Those are
+    deterministic client errors and must become terminal 'failed', never escape
+    process_job into the backoff loop and redeliver forever (findings 4 + 8)."""
+    from printer.relay.hub_client import HubClient
+    from printer.relay.local_client import LocalClient
+    from tests.conftest import lifespan_client
+
+    cfg = _cfg(relay_paths)
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    async with lifespan_client(fake_deps) as local_ac:
+        client = RelayClient(
+            cfg, relay_paths,
+            hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+            local=LocalClient(local_ac),
+        )
+        # sent_at spaced >1h apart so the per-friend rate gate (2/hour here) never
+        # pre-empts _submit -- we are testing the malformed-payload path, not gate 2.
+        # non-str raw_png_b64 -> TypeError in base64.b64decode
+        await client.process_job({
+            "job_id": "hj-typ1", "sender": "alice", "kind": "raw",
+            "sent_at": "2026-06-03T12:00:00+00:00", "payload": {"raw_png_b64": 12345},
+        })
+        # None document -> AttributeError in from_header_block
+        await client.process_job({
+            "job_id": "hj-typ2", "sender": "alice", "kind": "document",
+            "sent_at": "2026-06-03T14:00:00+00:00", "payload": {"document": None},
+        })
+        # None payload -> TypeError on subscripting payload["document"]
+        await client.process_job({
+            "job_id": "hj-typ3", "sender": "alice", "kind": "document",
+            "sent_at": "2026-06-03T16:00:00+00:00", "payload": None,
+        })
+    assert ("hj-typ1", "failed") in mock_hub.statuses
+    assert ("hj-typ2", "failed") in mock_hub.statuses
+    assert ("hj-typ3", "failed") in mock_hub.statuses
+    assert mock_hub.acked == []
+
+
 async def test_run_forever_survives_non_httpx_error(relay_paths, monkeypatch):
     """A non-httpx error from a poll cycle (e.g. OSError from a fsync, or a
     JSONDecodeError from a corrupted 200) must be caught and backed off, not kill

@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import select
 
 from hub.auth import TokenKind, authenticate
 from hub.invites import create_invite, redeem_invite
@@ -29,6 +30,27 @@ async def test_login_link_is_single_use(sm):
         await consume_login_link(s, code=link)
         with pytest.raises(LoginLinkError):
             await consume_login_link(s, code=link)
+
+
+async def test_reused_login_link_mints_no_second_token(sm):
+    # Single-use at the side-effect level: a second consume of a used link raises
+    # AND mints no second CONSOLE token. With the redundant read-guard removed, the
+    # conditional UPDATE is the sole gate, so this serial second consume genuinely
+    # reaches the rowcount==0 branch -- a regression to a non-atomic set would mint
+    # a second token and fail this test. (True concurrent racing is Postgres-only.)
+    from hub.models import Token
+    async with sm() as s:
+        await _join(s, "alice")
+        link = await create_login_link(s, handle="alice", ttl_s=600)
+        await consume_login_link(s, code=link)
+        with pytest.raises(LoginLinkError):
+            await consume_login_link(s, code=link)
+        console_tokens = (
+            await s.execute(
+                select(Token).where(Token.kind == TokenKind.CONSOLE.value)
+            )
+        ).scalars().all()
+        assert len(console_tokens) == 1
 
 
 async def test_login_link_expiry_rejected(sm):

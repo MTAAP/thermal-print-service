@@ -101,3 +101,23 @@ def test_jobmap_append_and_replay_last_wins(tmp_path):
     # Unfinished = not yet in a terminal status.
     unfinished = reloaded.unfinished(terminal={"printed", "failed"})
     assert "hub_job_a" not in unfinished and "hub_job_b" in unfinished
+
+
+def test_jobmap_tolerates_corrupt_lines(tmp_path):
+    # A power cut mid-append can leave a torn trailing line; a malformed line must
+    # be skipped, not crash startup -- otherwise every delivered job is stranded.
+    path = tmp_path / "jobmap.jsonl"
+    jm = JobMap(path)
+    jm.put("good1", local_job_id="loc1", last_status="printed")
+    jm.put("good2", local_job_id="loc2", last_status="delivered")
+    # Append a non-JSON torn line and a JSON line missing a required key.
+    with open(path, "a") as f:
+        f.write('{"hub_job_id": "torn", "local_job_id": "lo')  # truncated, no newline
+        f.write("\n")
+        f.write('{"hub_job_id": "missing_fields"}\n')  # valid JSON, missing keys
+    reloaded = JobMap(path)
+    # Both well-formed entries survive; the bad lines are dropped.
+    assert reloaded.get("good1") == {"local_job_id": "loc1", "last_status": "printed"}
+    assert reloaded.get("good2") == {"local_job_id": "loc2", "last_status": "delivered"}
+    assert reloaded.get("torn") is None
+    assert reloaded.get("missing_fields") is None

@@ -71,3 +71,17 @@ def test_composite_band_rejects_wrong_width():
     except ValueError:
         raised = True
     assert raised
+
+
+def test_composite_band_undecodable_bytes_raise_valueerror():
+    # A friend's raw payload is untrusted. Garbage bytes (UnidentifiedImageError,
+    # an OSError) must normalize to ValueError so process_job marks the job
+    # terminally failed instead of letting the OSError escape into the
+    # run_forever backoff loop and redeliver the poison forever.
+    try:
+        composite_from_band(b"this is not a png", sender="alice",
+                            sent_at="2026-06-03T14:32:07+00:00")
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised

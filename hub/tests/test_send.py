@@ -1,6 +1,10 @@
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from hub.capabilities import upsert_capability
 from hub.invites import create_invite, redeem_invite
 from hub.jobs.wakeup import WakeupRegistry
+from hub.schemas import SendReq
 from hub.send import send_document
 
 SCHEMA = {
@@ -80,6 +84,49 @@ async def test_idempotent_send_returns_same_job_ids(sm):
         r2 = await send_document(s, wake, sender_handle="alice", to=["bob"],
                                  document=doc, idempotency_key="k1", sender_rate_per_min=30)
         assert r1.results[0].job_id == r2.results[0].job_id
+
+
+async def test_idempotency_key_is_scoped_to_recipients(sm):
+    # The idempotency key identifies a (recipients + payload) request, not just a
+    # payload. Reusing a key with a DIFFERENT recipient must NOT return the first
+    # job's id for the new recipient. With `to` in the hash it misses the receipt
+    # and trips the (sender, key) unique constraint -- a loud failure, never a
+    # silent wrong-recipient match (which is what happened before the fix).
+    wake = WakeupRegistry()
+    async with sm() as s:
+        alice, bob = await _two_friends_with_caps(s)
+        await _join(s, "carol", issuer=alice.printer_id)  # alice's friend, no caps
+        doc = {"blocks": [{"type": "paragraph"}]}
+        r1 = await send_document(s, wake, sender_handle="alice", to=["bob"],
+                                 document=doc, idempotency_key="k1", sender_rate_per_min=30)
+        assert r1.results[0].status == "queued"
+        with pytest.raises(IntegrityError):
+            await send_document(s, wake, sender_handle="alice", to=["carol"],
+                                document=doc, idempotency_key="k1", sender_rate_per_min=30)
+
+
+def test_sendreq_requires_exactly_one_payload():
+    doc = {"blocks": [{"type": "paragraph"}]}
+    # neither
+    with pytest.raises(ValueError):
+        SendReq(to=["bob"])
+    # both
+    with pytest.raises(ValueError):
+        SendReq(to=["bob"], document=doc, raw_png_b64="aGk=")
+    # invalid base64 for the raw path
+    with pytest.raises(ValueError):
+        SendReq(to=["bob"], raw_png_b64="not valid base64!!")
+    # Empty string raw / empty dict document are FALSY -> "absent". send_document
+    # branches on truthiness, so an identity (`is None`) check here would let
+    # raw_png_b64="" slip through and queue {"document": None} (an empty job the
+    # relay can't render). Both must be rejected as "neither".
+    with pytest.raises(ValueError):
+        SendReq(to=["bob"], raw_png_b64="")
+    with pytest.raises(ValueError):
+        SendReq(to=["bob"], document={})
+    # each valid form on its own
+    assert SendReq(to=["bob"], document=doc).raw_png_b64 is None
+    assert SendReq(to=["bob"], raw_png_b64="aGk=").document is None
 
 
 async def test_sender_throttle(sm):

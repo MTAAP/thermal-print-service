@@ -24,8 +24,16 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _payload_hash(document: dict | None, raw_png_b64: str | None) -> str:
-    blob = json.dumps({"d": document, "r": raw_png_b64}, sort_keys=True).encode()
+def _payload_hash(to: list[str], document: dict | None, raw_png_b64: str | None) -> str:
+    # The recipient set is part of the request identity, not just the payload.
+    # Excluding `to` let a replay with the same key but different recipients match
+    # a prior receipt and return the WRONG job ids. Sorted so recipient order
+    # never changes the hash. A same-key replay with a different `to` now misses
+    # the receipt and hits the (sender_handle, idempotency_key) unique constraint
+    # -- a loud failure, never a silent wrong-recipient match.
+    blob = json.dumps(
+        {"to": sorted(to), "d": document, "r": raw_png_b64}, sort_keys=True
+    ).encode()
     return hashlib.sha256(blob).hexdigest()
 
 
@@ -45,7 +53,7 @@ async def send_document(
     to: list[str], document: dict | None, idempotency_key: str | None,
     sender_rate_per_min: int, raw_png_b64: str | None = None,
 ) -> SendResp:
-    payload_hash = _payload_hash(document, raw_png_b64)
+    payload_hash = _payload_hash(to, document, raw_png_b64)
 
     # Send-level idempotency (per sender). Same key+payload -> original job ids.
     if idempotency_key:
