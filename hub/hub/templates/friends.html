@@ -8,7 +8,7 @@
   </form>
   <div id="invite-slot" class="invite-slot">
     {% if invite_code %}
-    <p class="invite-code" data-testid="invite-code"><code>{{ invite_code }}</code></p>
+    {% include "invite_code.html" %}
     {% endif %}
   </div>
   <ul class="list friends-list" data-testid="friends-list">

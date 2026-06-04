@@ -30,6 +30,16 @@ def _login_redirect() -> RedirectResponse:
     return RedirectResponse(url="/console/login", status_code=303)
 
 
+def _is_htmx(request: Request) -> bool:
+    # HTMX sets this header on every request it issues. We branch on it so an
+    # interactive (JS) request gets back ONLY the fragment to swap into its
+    # target slot, while a no-JS form POST gets a full page. Returning a full
+    # page (which extends base.html) into an hx-swap="innerHTML" target is what
+    # nested the entire console inside #results-slot / #invite-slot -- the
+    # duplicate-UI bug. The header is the canonical HTMX request marker.
+    return request.headers.get("hx-request") == "true"
+
+
 @router.get("/")
 async def friends_view(request: Request):
     deps: AppDeps = request.app.state.deps
@@ -53,16 +63,15 @@ async def make_invite(request: Request):
         except NotAuthenticated:
             return _login_redirect()
         code = await create_invite(s, issuer_printer_id=me.id, ttl_s=_INVITE_TTL_S)
-    # HTMX swaps this fragment into the invite slot; a full-page fallback also works
-    # because the friends template includes the same partial.
+        # Interactive request: return only the invite-code fragment that the
+        # friends page also includes, so HTMX swaps it into #invite-slot alone.
+        if _is_htmx(request):
+            return _templates.TemplateResponse(request, "invite_code.html", {"invite_code": code})
+        friends = await list_friends(s, me.id, online_ids=deps.online)
+    # No-JS fallback: the full friends page, with the code rendered in its slot.
     return _templates.TemplateResponse(request, "friends.html", {
-        "me": me.handle, "friends": await _friends(deps, me.id), "invite_code": code,
+        "me": me.handle, "friends": friends, "invite_code": code,
     })
-
-
-async def _friends(deps: AppDeps, owner_id: str):
-    async with deps.sessionmaker() as s:
-        return await list_friends(s, owner_id, online_ids=deps.online)
 
 
 # The v1 composer uses ONLY the documented common-core block set that is stable
@@ -113,7 +122,15 @@ async def compose_send(
             document=_compose_document(title, message), idempotency_key=None,
             sender_rate_per_min=deps.config.sender_rate_per_min,
         )
+        # Interactive request: return only the per-recipient results fragment
+        # that the compose page also includes, so HTMX swaps it into
+        # #results-slot alone instead of nesting the whole console.
+        if _is_htmx(request):
+            return _templates.TemplateResponse(
+                request, "send_results.html", {"results": resp.results}
+            )
         friends = await list_friends(s, me.id, online_ids=deps.online)
+    # No-JS fallback: the full compose page, with results rendered in its slot.
     return _templates.TemplateResponse(request, "compose.html", {
         "me": me.handle, "friends": friends, "results": resp.results,
     })

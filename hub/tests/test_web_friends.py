@@ -70,9 +70,23 @@ async def test_friends_view_offline_friend(web_client):
     assert 'data-online="false"' in r.text
 
 
-async def test_invite_button_generates_code(web_client):
+async def test_invite_button_htmx_returns_code_fragment_only(web_client):
     client, _deps, _alice = web_client
-    r = await client.post("/friends/invite")
+    r = await client.post("/friends/invite", headers={"HX-Request": "true"})
     assert r.status_code == 200
     # the generated invite code is surfaced in a stable hook
     assert 'data-testid="invite-code"' in r.text
+    # Fragment only -- the full friends page (shell, nav, friends-view) must NOT
+    # come back into the #invite-slot innerHTML swap (the duplicate-UI bug).
+    for marker in ("app-shell", 'data-testid="nav"', 'data-testid="friends-view"'):
+        assert marker not in r.text, f"HTMX fragment leaked full-page marker {marker!r}"
+
+
+async def test_invite_button_no_js_returns_full_page(web_client):
+    client, _deps, _alice = web_client
+    r = await client.post("/friends/invite")
+    assert r.status_code == 200
+    assert 'data-testid="invite-code"' in r.text
+    # No-JS fallback: the whole friends page, code rendered in its slot.
+    assert 'data-testid="friends-view"' in r.text
+    assert "app-shell" in r.text
