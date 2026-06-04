@@ -36,6 +36,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["hub*"]
 
+# The web console's assets live beside the package code but are not Python
+# modules, so they are omitted from the wheel unless declared as package data.
+# Without this, a pip-installed hub (the Docker image) boots straight into a
+# RuntimeError when create_app mounts /static and web.py loads its templates.
+[tool.setuptools.package-data]
+hub = ["static/*", "static/**/*", "templates/*", "templates/**/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
