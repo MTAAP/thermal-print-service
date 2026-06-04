@@ -34,6 +34,7 @@ async def list_friends(
             handle=p.handle, display_name=p.display_name,
             renderer_version=p.renderer_version, online=p.id in online_ids,
             via_invite_id=origin_invite_id,
+            last_seen_at=p.last_seen_at.isoformat() if p.last_seen_at else None,
         )
         for p, origin_invite_id in rows
     ]

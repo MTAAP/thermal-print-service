@@ -58,6 +58,17 @@ class Friendship(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class LoginLink(Base):
+    """One-time, short-lived console login link. Plaintext is hashed at rest like
+    an invite code; consuming it mints a CONSOLE token (§9.1, §13)."""
+    __tablename__ = "login_links"
+    code_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    printer_id: Mapped[str] = mapped_column(ForeignKey("printers.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Capability(Base):
     """Cached full /schema keyed by renderer_version (the fingerprint, §6.2)."""
     __tablename__ = "capabilities"

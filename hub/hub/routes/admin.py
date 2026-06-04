@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from hub.invites import create_invite
@@ -17,7 +19,8 @@ def _deps(request: Request) -> AppDeps:
 async def admin_invite(request: Request, authorization: str | None = Header(default=None)):
     deps = _deps(request)
     token = bearer(authorization)
-    if not deps.config.admin_token or token != deps.config.admin_token:
+    # Constant-time compare to avoid leaking the admin token via timing.
+    if not deps.config.admin_token or not hmac.compare_digest(token, deps.config.admin_token):
         raise HTTPException(status_code=403, detail="bad admin token")
     async with deps.sessionmaker() as s:
         code = await create_invite(s, issuer_printer_id=None, ttl_s=7 * 24 * 3600)

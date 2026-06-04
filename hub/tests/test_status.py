@@ -27,6 +27,30 @@ async def test_status_callback_records_printer_unknown_partial(app_client):
         assert (await s.get(Job, job_id)).state == "printer_unknown_partial"
 
 
+async def test_status_callback_idempotent_same_status_but_conflict_409(app_client):
+    """The relay's crash/lost-response replay can re-post the SAME terminal status;
+    that must be idempotent (200), not 409 — otherwise replay_unfinished crash-loops
+    the relay. A DIFFERENT terminal status on an already-terminal job is a real
+    conflict and must still 409 (not silently swallowed)."""
+    client, deps = app_client
+    alice, bob = await _join_pair(deps)
+    send = await client.post("/send", headers={"Authorization": f"Bearer {alice.api_token}"},
+                             json={"to": ["bob"], "document": {"blocks": []}})
+    job_id = send.json()["results"][0]["job_id"]
+    bob_auth = {"Authorization": f"Bearer {bob.device_token}"}
+    await client.get("/inbox?wait=1", headers=bob_auth)
+    await client.post(f"/jobs/{job_id}/ack", headers=bob_auth)
+
+    r = await client.post(f"/jobs/{job_id}/status", headers=bob_auth, json={"status": "printed"})
+    assert r.status_code == 200
+    # re-post the SAME status (replay) -> idempotent success
+    r = await client.post(f"/jobs/{job_id}/status", headers=bob_auth, json={"status": "printed"})
+    assert r.status_code == 200
+    # a conflicting terminal status on an already-terminal job -> 409
+    r = await client.post(f"/jobs/{job_id}/status", headers=bob_auth, json={"status": "failed"})
+    assert r.status_code == 409
+
+
 async def test_device_token_cannot_send(app_client):
     client, deps = app_client
     alice, bob = await _join_pair(deps)

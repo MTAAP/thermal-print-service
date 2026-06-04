@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="view view-login" data-testid="login-landing">
+  <h1 class="view-title">Printer Pals console</h1>
+  {% if invalid %}
+  <p class="login-note login-invalid" data-testid="login-invalid">That login link is invalid or expired. Generate a new one
+    on your Pi with <code>printer-hub mint-login-link &lt;handle&gt;</code>.</p>
+  {% else %}
+  <p class="login-note">Open the login link generated on your Pi to sign in.</p>
+  {% endif %}
+</section>
+{% endblock %}

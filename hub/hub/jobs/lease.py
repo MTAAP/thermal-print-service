@@ -71,7 +71,14 @@ async def report_terminal(session: AsyncSession, *, job_id: str, status: str) ->
         ),
     )
     await session.commit()
-    return res.rowcount == 1
+    if res.rowcount == 1:
+        return True
+    # Idempotent re-report of the SAME terminal status succeeds: the relay's
+    # crash / lost-response replay can re-post a status the hub already recorded.
+    # A DIFFERENT terminal status on an already-terminal job is a real conflict
+    # and must NOT be swallowed -> False -> the route returns 409.
+    job = await session.get(Job, job_id)
+    return job is not None and job.state == status
 
 
 async def sweep(session: AsyncSession, *, job_ttl_s: int) -> dict[str, int]:

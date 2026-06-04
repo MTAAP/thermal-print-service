@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from hub.auth import TokenKind, authenticate
 from hub.ids import new_id
 from hub.jobs.lease import ack_delivered, lease_next, report_terminal
+from hub.models import Job
 from hub.routes import AppDeps, bearer
 
 router = APIRouter()
@@ -27,6 +28,13 @@ async def get_inbox(request: Request, wait: float | None = None,
     poll_id = new_id("poll")
     async with deps.sessionmaker() as s:
         me = await _device(deps, s, authorization)
+        # Stamp last-seen so the web Friends view can show recency even when the
+        # printer is not currently holding a poll. Online (deps.online) is the
+        # live signal; last_seen_at is the durable fallback.
+        from datetime import UTC, datetime
+
+        me.last_seen_at = datetime.now(UTC)
+        await s.commit()
     deps.online.add(me.id)
     try:
         # Try immediately, then wait on the wakeup event once if empty.
@@ -53,7 +61,12 @@ async def post_ack(request: Request, job_id: str,
                    authorization: str | None = Header(default=None)):
     deps: AppDeps = request.app.state.deps
     async with deps.sessionmaker() as s:
-        await _device(deps, s, authorization)
+        me = await _device(deps, s, authorization)
+        # Ownership guard: a device may only ack jobs addressed to it. 404 (not
+        # 403) so a device cannot probe the existence of other printers' jobs.
+        job = await s.get(Job, job_id)
+        if job is None or job.recipient_id != me.id:
+            raise HTTPException(status_code=404, detail="job not found")
         ok = await ack_delivered(s, job_id=job_id, poll_id="")
     if not ok:
         raise HTTPException(status_code=409, detail="job not in leased state")
@@ -69,7 +82,11 @@ async def post_status(request: Request, job_id: str, body: StatusReq,
                       authorization: str | None = Header(default=None)):
     deps: AppDeps = request.app.state.deps
     async with deps.sessionmaker() as s:
-        await _device(deps, s, authorization)
+        me = await _device(deps, s, authorization)
+        # Ownership guard: a device may only report status on its own jobs.
+        job = await s.get(Job, job_id)
+        if job is None or job.recipient_id != me.id:
+            raise HTTPException(status_code=404, detail="job not found")
         try:
             ok = await report_terminal(s, job_id=job_id, status=body.status)
         except ValueError as exc:

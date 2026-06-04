@@ -31,6 +31,7 @@ class FriendOut(BaseModel):
     renderer_version: str | None
     online: bool
     via_invite_id: str | None = None
+    last_seen_at: str | None = None
 
 
 class SendReq(BaseModel):

@@ -19,3 +19,24 @@ def test_defaults_and_env_override():
     assert cfg2.long_poll_wait_s == 10.0
     assert cfg2.job_ttl_s == 3600
     assert cfg2.admin_token == "secret"
+
+
+def test_web_session_config_defaults_and_override():
+    from hub.config import HubConfig
+
+    cfg = HubConfig.from_env({})
+    # No default secret: a missing secret must be a loud misconfiguration in prod,
+    # but tests/dev get a deterministic dev value so the cookie layer works.
+    assert cfg.session_secret == "dev-insecure-session-secret"
+    assert cfg.login_link_ttl_s == 600  # 10 minutes
+    # Secure cookie defaults ON so prod behind TLS is safe by default.
+    assert cfg.session_https_only is True
+
+    cfg2 = HubConfig.from_env({
+        "HUB_SESSION_SECRET": "s3cr3t",
+        "HUB_LOGIN_LINK_TTL_S": "120",
+        "HUB_SESSION_HTTPS_ONLY": "false",
+    })
+    assert cfg2.session_secret == "s3cr3t"
+    assert cfg2.login_link_ttl_s == 120
+    assert cfg2.session_https_only is False

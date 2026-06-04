@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="view view-history" data-testid="history-view">
+  <h1 class="view-title">History</h1>
+
+  <h2 class="section-title">Sent</h2>
+  <ul class="list history-list" data-testid="history-sent">
+    {% for r in history.sent %}
+    <li class="list-row" data-job="{{ r.job_id }}" data-status="{{ r.status }}">
+      <span class="peer">to {{ r.peer }}</span>
+      <span class="status">{{ r.status }}</span>
+      <span class="when">{{ r.sent_at }}</span>
+      {% if r.status == "printer_unknown_partial" %}
+      <p class="partial-warning" data-testid="partial-warning">
+        Paper may have been partially consumed on their printer. This is unsafe to
+        send again automatically -- check with them before composing a new message.
+      </p>
+      {% endif %}
+    </li>
+    {% else %}
+    <li class="list-empty" data-testid="no-sent">Nothing sent yet.</li>
+    {% endfor %}
+  </ul>
+
+  <h2 class="section-title">Received</h2>
+  <ul class="list history-list" data-testid="history-received">
+    {% for r in history.received %}
+    <li class="list-row" data-job="{{ r.job_id }}" data-status="{{ r.status }}">
+      <span class="peer">from {{ r.peer }}</span>
+      <span class="status">{{ r.status }}</span>
+      <span class="when">{{ r.sent_at }}</span>
+    </li>
+    {% else %}
+    <li class="list-empty" data-testid="no-received">Nothing received yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

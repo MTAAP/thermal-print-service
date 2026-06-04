@@ -42,3 +42,40 @@ async def authenticate(
     if printer is None:
         raise PermissionError("token has no printer")
     return printer
+
+
+async def mint_console_token(session: AsyncSession, printer_id: str) -> str:
+    """Mint a CONSOLE-class token for a printer. The plaintext is returned once
+    (it rides in the signed session cookie); only the hash is stored, so the
+    token stays independently revocable per §9.1."""
+    from datetime import UTC, datetime
+
+    from hub.ids import new_id
+
+    plaintext, h = mint_token()
+    session.add(Token(id=new_id("tok"), printer_id=printer_id,
+                      kind=TokenKind.CONSOLE.value, token_hash=h,
+                      revoked_at=None, created_at=datetime.now(UTC)))
+    await session.commit()
+    return plaintext
+
+
+async def revoke_token(session: AsyncSession, plaintext: str) -> bool:
+    """Revoke a token by plaintext (used by console logout). Idempotent."""
+    from datetime import UTC, datetime
+    from typing import cast
+
+    from sqlalchemy import CursorResult, update
+
+    # Async execute() is typed Result[Any] but an UPDATE returns a CursorResult
+    # at runtime; cast to read rowcount, matching the jobs/lease.py convention.
+    res = cast(
+        "CursorResult",
+        await session.execute(
+            update(Token).where(Token.token_hash == hash_token(plaintext),
+                                Token.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        ),
+    )
+    await session.commit()
+    return res.rowcount == 1

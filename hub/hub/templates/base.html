@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Printer Pals</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-brand">
+      <span class="app-brand-name">Printer Pals</span>
+      <span>console</span>
+    </header>
+    <nav class="app-nav" data-testid="nav">
+      <a href="/">Friends</a>
+      <a href="/compose">Compose</a>
+      <a href="/history">History</a>
+      <span class="app-nav-spacer"></span>
+      <form method="post" action="/console/logout" style="display:inline">
+        <button type="submit" class="btn-ghost" data-testid="logout">Log out</button>
+      </form>
+    </nav>
+    <main class="app-main">{% block content %}{% endblock %}</main>
+  </div>
+</body>
+</html>
