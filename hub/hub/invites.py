@@ -63,6 +63,13 @@ async def redeem_invite(
     printer = Printer(id=new_id("prn"), handle=handle, display_name=display_name,
                       renderer_version=None, last_seen_at=None, created_at=_now())
     session.add(printer)
+    # Persist the printer row before anything that FK-references it (the tokens,
+    # the invite's redeemed_by, the friendship rows). The unit of work does not
+    # order a raw-column FK assignment (inv.redeemed_by = printer.id) after the
+    # printer INSERT, so on a FK-enforcing database (Postgres) the invite UPDATE
+    # would otherwise flush first and violate invites_redeemed_by_fkey. SQLite
+    # leaves FK enforcement off by default, which is why this hid in tests.
+    await session.flush()
 
     dev_plain, dev_hash = mint_token()
     api_plain, api_hash = mint_token()
