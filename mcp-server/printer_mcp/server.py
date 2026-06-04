@@ -115,6 +115,57 @@ def build_send_to_friend_input_schema() -> dict[str, Any]:
     }
 
 
+def build_message_friend_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": (
+                    "Friend handles to send to (e.g. ['alice', 'bob']). Use "
+                    "list_friends to see who you can send to."
+                ),
+            },
+            "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "The message body. Printed as a paragraph on each "
+                    "recipient's printer, under an optional title."
+                ),
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional bold title printed above the message.",
+            },
+            "idempotency_key": {
+                "type": "string",
+                "description": (
+                    "Optional. Same key + same payload returns the original "
+                    "per-recipient job ids instead of re-queuing."
+                ),
+            },
+        },
+        "required": ["to", "text"],
+        "additionalProperties": False,
+    }
+
+
+def _compose_text_document(title: str, text: str) -> dict[str, Any]:
+    # Common-core only (header + paragraph): these block types are stable across
+    # EVERY renderer version (hub spec §6.2), so a plain-text message needs no
+    # get_friend_schema round-trip -- any friend's printer accepts it. Mirrors
+    # the hub web console's compose document exactly (header iff a title, then a
+    # paragraph; field name is `text`, not `content`).
+    blocks: list[dict[str, Any]] = []
+    if title.strip():
+        blocks.append({"type": "header", "text": title.strip()})
+    blocks.append({"type": "paragraph", "text": text})
+    return {"blocks": blocks}
+
+
 def _ok(payload: Any) -> list[mcp_types.TextContent]:
     if isinstance(payload, dict) and "ok" in payload:
         body = payload
@@ -279,6 +330,23 @@ def build_server(
                 inputSchema=build_send_to_friend_input_schema(),
             ),
             mcp_types.Tool(
+                name="message_friend",
+                description=(
+                    "Send a quick text message to one or more friends on the "
+                    "Printer Pals network -- no document composition needed. "
+                    "Give `text` (and an optional `title`) and it prints as a "
+                    "titled note on each recipient's printer with a FROM tag. "
+                    "Uses only common-core blocks (header + paragraph) that "
+                    "EVERY renderer version accepts, so unlike send_to_friend "
+                    "you do NOT need get_friend_schema first. Reach for "
+                    "send_to_friend when you need richer blocks (lists, qr, "
+                    "images). Returns the same per-recipient results array as "
+                    "send_to_friend (queued / not_friend / recipient_unknown / "
+                    "sender_throttled)."
+                ),
+                inputSchema=build_message_friend_input_schema(),
+            ),
+            mcp_types.Tool(
                 name="list_friends",
                 description=(
                     "List the friends you can send to: handle, display name, "
@@ -334,6 +402,8 @@ def build_server(
                 return _ok(payload())
             if name == "send_to_friend":
                 return await _call_send_to_friend(cfg, hub_client, args)
+            if name == "message_friend":
+                return await _call_message_friend(cfg, hub_client, args)
             if name == "list_friends":
                 _require_hub_token(cfg)
                 return _ok(await hub_client.list_friends())
@@ -381,6 +451,30 @@ async def _call_send_to_friend(
     idem_str = str(idem) if idem else None
     # The hub returns {results:[...]} for both 202 (partial) and 400 (all-failed);
     # surface it verbatim so the agent sees per-recipient status + incompatible.detail.
+    return _ok(await hub_client.send(to=to, document=document, idempotency_key=idem_str))
+
+
+async def _call_message_friend(
+    cfg: McpConfig, hub_client: HubClient, args: dict[str, Any]
+) -> list[mcp_types.TextContent]:
+    _require_hub_token(cfg)
+    to = args.get("to")
+    if not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to):
+        raise PrintServiceError(
+            status=400, message="argument 'to' must be a non-empty list of handles"
+        )
+    text = args.get("text")
+    if not isinstance(text, str) or not text:
+        raise PrintServiceError(
+            status=400, message="argument 'text' must be a non-empty string"
+        )
+    title = args.get("title")
+    title_str = str(title) if title else ""
+    idem = args.get("idempotency_key")
+    idem_str = str(idem) if idem else None
+    # Compose the common-core document here, then reuse the same hub /send path
+    # as send_to_friend -- message_friend is purely an ergonomic wrapper.
+    document = _compose_text_document(title_str, text)
     return _ok(await hub_client.send(to=to, document=document, idempotency_key=idem_str))
 
 

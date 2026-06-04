@@ -9,6 +9,7 @@ import pytest
 
 from printer_mcp.config import McpConfig
 from printer_mcp.server import (
+    build_message_friend_input_schema,
     build_print_document_input_schema,
     build_print_image_input_schema,
     build_send_to_friend_input_schema,
@@ -67,6 +68,7 @@ def test_list_tools_returns_expected_set(cfg, sample_schema_payload):
         "print_test",
         "get_design_guidelines",
         "send_to_friend",
+        "message_friend",
         "list_friends",
         "get_friend_schema",
     }
@@ -348,6 +350,90 @@ def test_send_to_friend_happy_path_returns_per_recipient_queued(cfg, sample_sche
     assert payload["ok"] is True
     assert payload["result"]["results"][0]["status"] == "queued"
     assert payload["result"]["results"][0]["job_id"] == "j_a"
+
+
+def test_message_friend_input_schema_requires_to_and_text():
+    s = build_message_friend_input_schema()
+    assert s["required"] == ["to", "text"]
+    assert s["properties"]["title"]["type"] == "string"
+    assert "title" not in s["required"]
+
+
+def test_message_friend_composes_titled_common_core_doc_and_sends(cfg, sample_schema_payload):
+    cfg = McpConfig(print_service_url=cfg.print_service_url, sender=cfg.sender,
+                    timeout_s=cfg.timeout_s, hub_url="http://hub.test",
+                    hub_api_token="tok-test")
+    seen: dict = {}
+
+    def pi(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        return httpx.Response(404)
+
+    def hub(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/send"
+        body = json.loads(request.content.decode())
+        seen["body"] = body
+        return httpx.Response(202, json={"results": [
+            {"to": "alice", "status": "queued", "job_id": "j_a"},
+        ]})
+
+    server, cache, _, _ = build_with_handler(cfg, pi, hub_handler=hub)
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    content = call_tool(server, "message_friend",
+                        {"to": ["alice"], "title": "Hi", "text": "deez nuts"})
+    payload = json.loads(content[0].text)
+    assert payload["ok"] is True
+    assert payload["result"]["results"][0]["status"] == "queued"
+    # The wrapper built a common-core document: header(title) + paragraph(text).
+    assert seen["body"]["to"] == ["alice"]
+    assert seen["body"]["document"]["blocks"] == [
+        {"type": "header", "text": "Hi"},
+        {"type": "paragraph", "text": "deez nuts"},
+    ]
+
+
+def test_message_friend_without_title_is_single_paragraph(cfg, sample_schema_payload):
+    cfg = McpConfig(print_service_url=cfg.print_service_url, sender=cfg.sender,
+                    timeout_s=cfg.timeout_s, hub_url="http://hub.test",
+                    hub_api_token="tok-test")
+    seen: dict = {}
+
+    def pi(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        return httpx.Response(404)
+
+    def hub(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(202, json={"results": [{"to": "bob", "status": "queued"}]})
+
+    server, cache, _, _ = build_with_handler(cfg, pi, hub_handler=hub)
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    call_tool(server, "message_friend", {"to": ["bob"], "text": "just a note"})
+    # No title -> no header block, just the paragraph.
+    assert seen["body"]["document"]["blocks"] == [
+        {"type": "paragraph", "text": "just a note"},
+    ]
+
+
+def test_message_friend_without_token_fails_loudly(cfg, sample_schema_payload):
+    # No hub token configured: the tool must fail with a crisp error, never an
+    # unauthenticated request (matches send_to_friend's discipline).
+    def pi(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        return httpx.Response(404)
+
+    server, cache, _, _ = build_with_handler(cfg, pi)  # cfg has no hub_api_token
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    content = call_tool(server, "message_friend", {"to": ["alice"], "text": "hi"})
+    payload = json.loads(content[0].text)
+    assert payload["ok"] is False
+    assert "HUB_API_TOKEN" in payload["error"]
 
 
 def test_send_to_friend_incompatible_round_trip_surfaces_detail(cfg, sample_schema_payload):
