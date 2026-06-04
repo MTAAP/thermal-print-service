@@ -77,15 +77,23 @@ as_service_user "${APP_DIR}/.venv/bin/pip" install --upgrade pip wheel
 as_service_user "${APP_DIR}/.venv/bin/pip" install -e "${APP_DIR}/printer-core"
 as_service_user "${APP_DIR}/.venv/bin/pip" install -e "${APP_DIR}/service"
 
-echo "==> install service unit"
-UNIT_TMP="$(mktemp)"
-sed \
-  -e "s|User=thermalprinter|User=${SERVICE_USER}|g" \
-  -e "s|Group=thermalprinter|Group=${SERVICE_GROUP}|g" \
-  -e "s|/home/thermalprinter/thermal-print-service|${APP_DIR}|g" \
-  deploy/printer.service > "${UNIT_TMP}"
-$SUDO install -m 0644 "${UNIT_TMP}" /etc/systemd/system/printer.service
-rm -f "${UNIT_TMP}"
+echo "==> install systemd units"
+# printer.service (the print service) is always installed; printer-relay.service
+# (the friend-network relay) is installed but stays DISABLED until the operator
+# joins a hub -- `printer-svc relay run` exits if there are no creds, so enabling
+# it before `printer-svc hub join` would just crash-loop.
+for unit in printer.service printer-relay.service; do
+  UNIT_TMP="$(mktemp)"
+  sed \
+    -e "s|User=thermalprinter|User=${SERVICE_USER}|g" \
+    -e "s|Group=thermalprinter|Group=${SERVICE_GROUP}|g" \
+    -e "s|/home/thermalprinter/thermal-print-service|${APP_DIR}|g" \
+    "deploy/${unit}" > "${UNIT_TMP}"
+  $SUDO install -m 0644 "${UNIT_TMP}" "/etc/systemd/system/${unit}"
+  rm -f "${UNIT_TMP}"
+done
 $SUDO systemctl daemon-reload
 
 echo "==> done. Reboot once for lp group to take effect, or open a new login shell."
+echo "    To join the friend network: printer-svc hub join <code> --handle <h> --display-name <n>"
+echo "    Then: sudo systemctl enable --now printer-relay.service"
