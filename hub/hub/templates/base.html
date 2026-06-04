@@ -12,6 +12,8 @@
     <header class="app-brand">
       <span class="app-brand-name">Printer Pals</span>
       <span>console</span>
+      {# Authed pages pass `me` (the handle); public pages (login, join) don't. #}
+      {% if me %}<span class="app-brand-user" data-testid="current-handle">{{ me }}</span>{% endif %}
     </header>
     {# Nav is for signed-in consoles only. The public pages (login landing, the
        /join onboarding form) share this shell but have no session, and showing

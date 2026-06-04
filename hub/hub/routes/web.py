@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -41,6 +42,25 @@ def _is_htmx(request: Request) -> bool:
     # nested the entire console inside #results-slot / #invite-slot -- the
     # duplicate-UI bug. The header is the canonical HTMX request marker.
     return request.headers.get("hx-request") == "true"
+
+
+def _same_origin(request: Request, public_url: str) -> bool:
+    # Login-CSRF defense for POST /join. /join is the one state-changing endpoint
+    # that works WITHOUT a session cookie, so SameSite=Lax (which protects the
+    # authed console POSTs -- a cross-site POST drops the session cookie) gives it
+    # no protection. A browser always sends Origin on a cross-origin form POST, so
+    # reject when Origin (or Referer, as a fallback) is present and points at a
+    # different host than ours. Absent both -> allow: a CSRF attack is by
+    # definition browser-driven and will carry one. A misconfigured/empty
+    # public_url never blocks a join (it would already have broken the join link).
+    expected = urlparse(public_url).netloc
+    if not expected:
+        return True
+    for header in ("origin", "referer"):
+        value = request.headers.get(header)
+        if value:
+            return urlparse(value).netloc == expected
+    return True
 
 
 @router.get("/")
@@ -99,16 +119,20 @@ async def join_submit(
     display_name: str = Form(...),
 ):
     deps: AppDeps = request.app.state.deps
+    # Reject cross-origin browser submits before doing any work (see _same_origin).
+    if not _same_origin(request, deps.config.public_url):
+        raise HTTPException(status_code=403, detail="cross-origin join blocked")
     # Validate via the same RegisterReq contract the JSON /register path uses, so
-    # a web-joined handle obeys the identical rules (no divergent validation).
+    # a web-joined handle obeys the identical rules. The message covers BOTH fields
+    # because either can fail (a pasted >80-char display name, an uppercase handle).
     try:
         req = RegisterReq(code=code.strip(), handle=handle.strip(),
                           display_name=display_name.strip())
     except ValidationError:
         return _templates.TemplateResponse(request, "join.html", {
             "code": code, "handle": handle, "display_name": display_name,
-            "error": "Handle must be 1-40 characters: lowercase letters, "
-                     "numbers, dashes or underscores.",
+            "error": "Handle must be 1-40 characters (lowercase letters, numbers, "
+                     "dashes or underscores) and display name 1-80 characters.",
         })
     async with deps.sessionmaker() as s:
         try:

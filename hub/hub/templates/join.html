@@ -13,11 +13,11 @@
     </label>
     <label class="field"><span class="field-label">Handle</span>
       <input type="text" name="handle" value="{{ handle or '' }}" required
-             pattern="[a-z0-9_-]+" data-testid="join-handle">
+             pattern="^[a-z0-9_-]+$" maxlength="40" data-testid="join-handle">
     </label>
     <label class="field"><span class="field-label">Display name</span>
       <input type="text" name="display_name" value="{{ display_name or '' }}" required
-             data-testid="join-display-name">
+             maxlength="80" data-testid="join-display-name">
     </label>
     <button type="submit" data-testid="join-button">Join</button>
   </form>

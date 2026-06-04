@@ -33,6 +33,9 @@ async def test_join_redeems_invite_and_signs_in(app_client):
     home = await client.get("/")
     assert home.status_code == 200
     assert 'data-testid="friends-view"' in home.text
+    # And the session is bound to the NEWLY created handle, not some other account.
+    assert 'data-testid="current-handle"' in home.text
+    assert ">newbie<" in home.text
 
 
 async def test_join_unknown_code_rerenders_with_error(app_client):
@@ -66,3 +69,35 @@ async def test_join_bad_handle_format_rerenders_with_error(app_client):
     })
     assert r.status_code == 200
     assert 'data-testid="join-error"' in r.text
+
+
+async def test_join_bad_display_name_rerenders_with_error(app_client):
+    # display_name has no client-side maxlength guarantee server-side, so an
+    # over-length value must still be caught and shown as an error (not crash).
+    client, deps = app_client
+    r = await client.post("/join", follow_redirects=False, data={
+        "code": await _make_invite(deps), "handle": "okhandle", "display_name": "x" * 81,
+    })
+    assert r.status_code == 200
+    assert 'data-testid="join-error"' in r.text
+
+
+async def test_join_rejects_cross_origin_post(app_client):
+    # Login-CSRF guard: a form POST from another origin is refused before any
+    # account/session is created.
+    client, deps = app_client
+    r = await client.post("/join", follow_redirects=False,
+                          headers={"Origin": "https://evil.example"}, data={
+        "code": await _make_invite(deps), "handle": "victim", "display_name": "Victim",
+    })
+    assert r.status_code == 403
+
+
+async def test_join_allows_same_origin_post(app_client):
+    # A matching Origin (our own public_url host) is accepted normally.
+    client, deps = app_client
+    r = await client.post("/join", follow_redirects=False,
+                          headers={"Origin": "https://hub.example.invalid"}, data={
+        "code": await _make_invite(deps), "handle": "samesite", "display_name": "Same Site",
+    })
+    assert r.status_code == 303
