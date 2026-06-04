@@ -35,6 +35,15 @@ class McpConfig:
     # cap here, a multi-hundred-MB agent-supplied string lands as RSS
     # before the service cap fires. Match the Pi default by default.
     max_print_image_bytes: int = 8 * 1024 * 1024
+    # Printer Pals hub. The default host is a guaranteed-unresolvable
+    # `.invalid` name (RFC 6761) so a friend-send fails loudly with a DNS
+    # error when HUB_URL is unset — same loud-fail discipline as
+    # PRINT_SERVICE_URL above. HUB_API_TOKEN is the per-person API/MCP
+    # token (spec §9.1); it stays empty by default so a friend-tool call
+    # can return a crisp "HUB_API_TOKEN not set" instead of issuing an
+    # unauthenticated request.
+    hub_url: str = "https://printer-pals-hub.invalid"
+    hub_api_token: str = ""
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> McpConfig:
@@ -50,4 +59,6 @@ class McpConfig:
             max_print_image_bytes=int(
                 e.get("PRINT_MAX_IMAGE_BYTES", cls.max_print_image_bytes)
             ),
+            hub_url=e.get("HUB_URL", cls.hub_url).rstrip("/"),
+            hub_api_token=e.get("HUB_API_TOKEN", cls.hub_api_token),
         )

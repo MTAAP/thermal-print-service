@@ -10,6 +10,7 @@ from mcp.server import Server
 from printer_mcp.client import PrintServiceClient
 from printer_mcp.config import McpConfig
 from printer_mcp.errors import PrintServiceError, format_for_agent
+from printer_mcp.hub_client import HubClient
 from printer_mcp.schema_cache import SchemaCache
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,49 @@ def build_print_image_input_schema() -> dict[str, Any]:
     }
 
 
+def build_send_to_friend_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "to": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": (
+                    "Friend handles to send to (e.g. ['alice', 'bob']). "
+                    "Multi-select is just listing more than one. Use "
+                    "list_friends to see who you can send to."
+                ),
+            },
+            "document": {
+                # Generic object on purpose: MCP tool input schemas are frozen
+                # at list_tools() time, so this cannot reshape per recipient.
+                # The hub validates the document against the RECIPIENT's actual
+                # schema at send time and returns incompatible.detail. Call
+                # get_friend_schema(handle) first to compose a valid document.
+                "type": "object",
+                "additionalProperties": True,
+                "description": (
+                    "The print document (same block schema the recipient's "
+                    "printer speaks). Call get_friend_schema(handle) first to "
+                    "learn the recipient's available blocks/fields. If a "
+                    "recipient comes back 'incompatible', read result.detail "
+                    "(offending field + valid_values) and retry."
+                ),
+            },
+            "idempotency_key": {
+                "type": "string",
+                "description": (
+                    "Optional. Same key + same payload returns the original "
+                    "per-recipient job ids instead of re-queuing."
+                ),
+            },
+        },
+        "required": ["to", "document"],
+        "additionalProperties": False,
+    }
+
+
 def _ok(payload: Any) -> list[mcp_types.TextContent]:
     if isinstance(payload, dict) and "ok" in payload:
         body = payload
@@ -83,13 +127,20 @@ def _err(exc: PrintServiceError) -> list[mcp_types.TextContent]:
     return [mcp_types.TextContent(type="text", text=json.dumps(format_for_agent(exc), indent=2))]
 
 
-def build_server(cfg: McpConfig, client: PrintServiceClient, cache: SchemaCache) -> Server:
+def build_server(
+    cfg: McpConfig,
+    client: PrintServiceClient,
+    cache: SchemaCache,
+    hub_client: HubClient,
+) -> Server:
     """Construct and wire the low-level MCP server.
 
     The low-level ``Server`` is used (rather than ``FastMCP``) because
-    ``print_document``'s input schema is generated from a runtime fetch,
-    not a static type annotation — the spec's whole point is that
-    Claude's tool catalog is the live block-type catalog.
+    ``print_document``'s input schema is generated from a runtime fetch.
+    The Printer Pals friend tools (send_to_friend / list_friends /
+    get_friend_schema) live on this same server and talk to ``hub_client``;
+    because MCP input schemas are frozen at list_tools() time, send_to_friend
+    takes a generic ``document`` and the hub validates it per-recipient.
     """
     server: Server = Server("thermal-printer")
 
@@ -210,6 +261,53 @@ def build_server(cfg: McpConfig, client: PrintServiceClient, cache: SchemaCache)
                 inputSchema={"type": "object", "properties": {},
                              "additionalProperties": False},
             ),
+            mcp_types.Tool(
+                name="send_to_friend",
+                description=(
+                    "Send a print to one or more friends on the Printer Pals "
+                    "network (their printer, their tailnet). The recipient's "
+                    "printer renders it with a visible FROM tag. The `document` "
+                    "is the same block schema a printer speaks, but different "
+                    "friends may run different renderer versions -- call "
+                    "get_friend_schema(handle) first to compose a valid "
+                    "document. Returns a per-recipient results array; a "
+                    "recipient may come back 'queued' (with a job_id), "
+                    "'not_friend', 'recipient_unknown', 'incompatible' (with "
+                    "detail.valid_values so you can fix and retry), or "
+                    "'sender_throttled'."
+                ),
+                inputSchema=build_send_to_friend_input_schema(),
+            ),
+            mcp_types.Tool(
+                name="list_friends",
+                description=(
+                    "List the friends you can send to: handle, display name, "
+                    "renderer_version (a schema fingerprint -- friends sharing "
+                    "a version share a schema), and whether they're currently "
+                    "online. Call this before send_to_friend to pick "
+                    "recipients."
+                ),
+                inputSchema={"type": "object", "properties": {},
+                             "additionalProperties": False},
+            ),
+            mcp_types.Tool(
+                name="get_friend_schema",
+                description=(
+                    "Fetch a friend's block catalog/schema (renderer_version, "
+                    "blocks_schema, block_types) so you can compose a document "
+                    "that recipient's printer will accept BEFORE sending. Use "
+                    "this to avoid 'incompatible' results from send_to_friend."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "handle": {"type": "string",
+                                   "description": "Friend handle from list_friends."},
+                    },
+                    "required": ["handle"],
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -234,6 +332,15 @@ def build_server(cfg: McpConfig, client: PrintServiceClient, cache: SchemaCache)
             if name == "get_design_guidelines":
                 from printer_mcp.design_guidelines import payload
                 return _ok(payload())
+            if name == "send_to_friend":
+                return await _call_send_to_friend(cfg, hub_client, args)
+            if name == "list_friends":
+                _require_hub_token(cfg)
+                return _ok(await hub_client.list_friends())
+            if name == "get_friend_schema":
+                _require_hub_token(cfg)
+                handle = str(args["handle"])
+                return _ok(await hub_client.get_friend_schema(handle))
         except PrintServiceError as exc:
             return _err(exc)
         except KeyError as exc:
@@ -245,6 +352,36 @@ def build_server(cfg: McpConfig, client: PrintServiceClient, cache: SchemaCache)
         return _err(PrintServiceError(status=404, message=f"unknown tool: {name}"))
 
     return server
+
+
+def _require_hub_token(cfg: McpConfig) -> None:
+    """Loud-fail at call time (not boot) when HUB_API_TOKEN is unset, so the
+    friend tools still LIST (matching print_document's always-list behavior)
+    but a call returns a crisp error instead of an unauthenticated request."""
+    if not cfg.hub_api_token:
+        raise PrintServiceError(
+            status=400,
+            message="HUB_API_TOKEN not set -- export it to send to friends",
+        )
+
+
+async def _call_send_to_friend(
+    cfg: McpConfig, hub_client: HubClient, args: dict[str, Any]
+) -> list[mcp_types.TextContent]:
+    _require_hub_token(cfg)
+    to = args.get("to")
+    if not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to):
+        raise PrintServiceError(
+            status=400, message="argument 'to' must be a non-empty list of handles"
+        )
+    document = args.get("document")
+    if not isinstance(document, dict):
+        raise PrintServiceError(status=400, message="argument 'document' must be an object")
+    idem = args.get("idempotency_key")
+    idem_str = str(idem) if idem else None
+    # The hub returns {results:[...]} for both 202 (partial) and 400 (all-failed);
+    # surface it verbatim so the agent sees per-recipient status + incompatible.detail.
+    return _ok(await hub_client.send(to=to, document=document, idempotency_key=idem_str))
 
 
 async def _call_print_document(

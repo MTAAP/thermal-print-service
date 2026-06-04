@@ -5,7 +5,7 @@ import json
 
 import httpx
 
-from tests.test_server_tools import _build_with_handler, _call_tool, _list_tools
+from tests.conftest import build_with_handler, call_tool, list_tools
 
 
 def test_get_design_guidelines_appears_in_tool_list(cfg, sample_schema_payload):
@@ -14,10 +14,10 @@ def test_get_design_guidelines_appears_in_tool_list(cfg, sample_schema_payload):
             return httpx.Response(200, json=sample_schema_payload)
         return httpx.Response(404)
 
-    server, cache, _ = _build_with_handler(cfg, handler)
+    server, cache, _, _ = build_with_handler(cfg, handler)
     asyncio.run(cache.boot(retry_budget_s=0.5))
 
-    tools = _list_tools(server)
+    tools = list_tools(server)
     names = {t.name for t in tools}
     assert "get_design_guidelines" in names
 
@@ -37,10 +37,10 @@ def test_call_get_design_guidelines_returns_static_payload(cfg, sample_schema_pa
             return httpx.Response(200, json=sample_schema_payload)
         return httpx.Response(404)
 
-    server, cache, _ = _build_with_handler(cfg, handler)
+    server, cache, _, _ = build_with_handler(cfg, handler)
     asyncio.run(cache.boot(retry_budget_s=0.5))
 
-    content = _call_tool(server, "get_design_guidelines", {})
+    content = call_tool(server, "get_design_guidelines", {})
     assert len(content) == 1
     payload = json.loads(content[0].text)
 

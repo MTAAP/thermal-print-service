@@ -71,6 +71,18 @@ Some shapes the surface accommodates well (not an exhaustive list — invent fre
 
 `get_design_guidelines()` — return the thermal-design rulebook (live print width, DPMM, fonts, lint summary, full `tprint-design` CLI workflow). Call this once at the start of an HTML-design session. The CLI itself is a separate install (not bundled with the MCP server because it pulls Playwright + a ~200 MB Chromium binary); if `tprint-design` isn't on PATH, see the **Optional: install the design CLI** section in `mcp-server/README.md` for the one-block setup.
 
+## Sending to friends (Printer Pals)
+
+The printer can also push a document to **someone else's** printer over the Printer Pals hub. Three tools cover it, and the **call order matters**:
+
+1. `list_friends()` — who you can send to. Returns one entry per friend: `handle`, display name, `renderer_version` (a schema fingerprint — friends on the same version share a block schema), and whether they're `online`.
+2. `get_friend_schema(handle)` — the recipient's block catalog (`renderer_version`, `blocks_schema`, `block_types`) **before** you compose. Different printers run different renderer versions, so a block your printer accepts may not exist on theirs. Pull the schema first to compose a document that recipient will accept. If a friend exists but their Pi hasn't reported capabilities yet, this returns nulls/empties — fall back to the common-core blocks (`header`, `paragraph`, `rule`, `footer`) or wait for their printer to come online.
+3. `send_to_friend(to, document, idempotency_key?)` — `to` is a list of handles; `document` is a normal block document (same shape as `print_document`). Raw-PNG sends are the web composer's job, not this tool.
+
+`send_to_friend` returns a **per-recipient results array** — one entry per handle in `to`, so a multi-recipient send can partially succeed. For any entry with status `incompatible`, read `result.detail`: it names the offending field plus `valid_values`. Fix that field for that recipient and retry. Calling `get_friend_schema(handle)` first is how you avoid `incompatible` in the first place. Don't blindly re-send the same document — read the detail and self-heal, same discipline as the `print_document` error contract above.
+
+Two env vars configure the hub: `HUB_URL` (the hub's base URL) and `HUB_API_TOKEN` (your per-person API token). The friend tools always list even when unconfigured, but a call fails loudly at call time if `HUB_API_TOKEN` is unset (you'll get a crisp "HUB_API_TOKEN not set" rather than an unauthenticated request). The default `HUB_URL` is `https://printer-pals-hub.invalid` — a deliberate loud-fail placeholder (an unresolvable `.invalid` name), mirroring the `PRINT_SERVICE_URL` convention. **Public-repo hygiene:** never paste a real hub URL or token into docs, commits, or chat; set them in your MCP `env` block only.
+
 ## When to reach for HTML design vs JSON blocks
 
 - **JSON blocks** (`print_document`): default. The block schema covers
