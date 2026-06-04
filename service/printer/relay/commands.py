@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 import httpx
 
 from printer.relay.hub_client import HubClient, register
+from printer.relay.local_client import LocalClient, SubmitOutcome
 from printer.relay.paths import RelayPaths
 from printer.relay.store import AllowList, CredsStore, InviteStore
 
@@ -41,6 +43,43 @@ async def hub_invite_new(paths: RelayPaths, client: httpx.AsyncClient) -> tuple[
     code, invite_id = await hub.create_invite()
     InviteStore(paths.invites_path).record(invite_id)
     return code, invite_id
+
+
+def _login_link_document(url: str, expires_in_s: int) -> dict[str, Any]:
+    """A small thermal document: a scannable QR of the login URL, the URL in
+    plain text (in case the QR won't scan), and a single-use/expiry note. Uses
+    only common-core blocks the local renderer always supports."""
+    minutes = max(1, expires_in_s // 60)
+    return {"blocks": [
+        {"type": "header", "text": "Printer Pals login"},
+        {"type": "qr", "data": url, "caption": "Scan to open the console", "size": "lg"},
+        {"type": "paragraph", "text": url},
+        {"type": "paragraph", "text": f"Single-use link. Expires in about {minutes} min."},
+    ]}
+
+
+async def hub_login_link(
+    paths: RelayPaths, hub_client: httpx.AsyncClient, local_client: httpx.AsyncClient,
+) -> tuple[str, int]:
+    """Ask the hub to mint a one-time console login link for THIS Pi's handle,
+    then print it (QR + URL) on local paper. Returns (url, expires_in_s) so the
+    CLI can also echo it. Device-owned action -> device-token auth.
+
+    A fresh random idempotency key per invocation: every `hub login-link` mints
+    a brand-new link, so the local print must never be deduped against a prior
+    one (the same operator running it twice wants two slips, not one)."""
+    creds = CredsStore(paths.creds_path).load()
+    if creds is None:
+        raise RuntimeError("not joined to a hub; run `hub join <code>` first")
+    hub = HubClient(hub_client, device_token=creds["device_token"], api_token=creds["api_token"])
+    url, expires_in_s = await hub.create_login_link()
+    result = await LocalClient(local_client).print_document(
+        _login_link_document(url, expires_in_s),
+        sender="login-link", idempotency_key=secrets.token_urlsafe(12),
+    )
+    if result.outcome is not SubmitOutcome.ACCEPTED:
+        raise RuntimeError(f"local print did not accept the login link: {result.outcome.value}")
+    return url, expires_in_s
 
 
 def hub_friends_accept(paths: RelayPaths, handle: str) -> None:

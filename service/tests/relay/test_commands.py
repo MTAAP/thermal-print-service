@@ -3,6 +3,7 @@ from printer.relay.commands import (
     hub_invite_new,
     hub_join,
     hub_leave,
+    hub_login_link,
     hub_status,
 )
 from printer.relay.store import AllowList, CredsStore, InviteStore
@@ -34,6 +35,34 @@ async def test_hub_invite_new_records_invite_id_locally(relay_paths, hub_http):
     assert InviteStore(relay_paths.invites_path).has(invite_id) is True
     # The plaintext code is NEVER recorded locally.
     assert InviteStore(relay_paths.invites_path).has(code) is False
+
+
+async def test_hub_login_link_mints_and_prints_via_local_service(
+    relay_paths, mock_hub, hub_http, fake_deps
+):
+    # End-to-end through the REAL local service: the login-link document (header
+    # + qr + url) must validate and render against the live block schema, so a
+    # malformed block would surface here as a non-202 and raise.
+    from tests.conftest import lifespan_client
+    CredsStore(relay_paths.creds_path).save({
+        "printer_id": "p", "handle": "pi", "hub_url": "http://hub.test",
+        "device_token": "dev-token", "api_token": "api-token",
+    })
+    async with lifespan_client(fake_deps) as local_ac:
+        url, expires_in_s = await hub_login_link(relay_paths, hub_http, local_ac)
+    assert url.endswith("/console/login?lt=tok123")
+    assert expires_in_s == 600
+    # The mint rode the device token, and the local service accepted the print.
+    assert mock_hub.auth_seen[-1] == "Bearer dev-token"
+
+
+async def test_hub_login_link_requires_joined(relay_paths, hub_http, fake_deps):
+    import pytest
+
+    from tests.conftest import lifespan_client
+    async with lifespan_client(fake_deps) as local_ac:
+        with pytest.raises(RuntimeError, match="not joined"):
+            await hub_login_link(relay_paths, hub_http, local_ac)
 
 
 def test_hub_friends_accept_adds_held_friend(relay_paths):

@@ -11,6 +11,15 @@ class CreateInviteResp(BaseModel):
     expires_at: str
 
 
+class LoginLinkResp(BaseModel):
+    # A ready-to-print console login URL plus how long it stays valid. The Pi
+    # prints `url` (as a QR + text) and uses `expires_in_s` for the human note;
+    # a relative TTL is clock-sync-independent, which matters on a Pi whose clock
+    # may not yet be synchronized.
+    url: str
+    expires_in_s: int
+
+
 class RegisterReq(BaseModel):
     code: str
     handle: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9_-]+$")

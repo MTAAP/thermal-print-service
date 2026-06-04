@@ -3,10 +3,10 @@
 <section class="view view-login" data-testid="login-landing">
   <h1 class="view-title">Printer Pals console</h1>
   {% if invalid %}
-  <p class="login-note login-invalid" data-testid="login-invalid">That login link is invalid or expired. Generate a new one
-    on your Pi with <code>printer-hub mint-login-link &lt;handle&gt;</code>.</p>
+  <p class="login-note login-invalid" data-testid="login-invalid">That login link is invalid or expired. Print a fresh one
+    by running <code>printer-svc hub login-link</code> on your Pi.</p>
   {% else %}
-  <p class="login-note">Open the login link generated on your Pi to sign in.</p>
+  <p class="login-note">To sign in, run <code>printer-svc hub login-link</code> on your Pi — it prints a QR code and URL. Open that link to sign in.</p>
   {% endif %}
 </section>
 {% endblock %}

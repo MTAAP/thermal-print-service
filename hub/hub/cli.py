@@ -24,7 +24,7 @@ def main() -> None:
         handle = sys.argv[2]
         from hub.config import HubConfig
         from hub.db import make_engine, make_sessionmaker
-        from hub.login import create_login_link
+        from hub.login import create_login_link, login_url
 
         cfg = HubConfig.from_env()
         engine = make_engine(cfg.database_url)
@@ -35,10 +35,10 @@ def main() -> None:
                 return await create_login_link(s, handle=handle, ttl_s=cfg.login_link_ttl_s)
 
         code = asyncio.get_event_loop().run_until_complete(_mint())
-        base = os.environ.get("HUB_PUBLIC_URL", "https://hub.example.invalid")
-        # Print the login URL for the operator to open. The default base is a
-        # placeholder that fails loudly (matching the MCP misconfig convention).
-        print(f"{base}/console/login?lt={code}")
+        # Print the login URL for the operator to open. cfg.public_url defaults to
+        # a loud placeholder that fails DNS (matching the MCP misconfig convention),
+        # and login_url is shared with the device-facing /login-links endpoint.
+        print(login_url(cfg.public_url, code))
         return
 
     print("usage: printer-hub run | mint-login-link <handle>")

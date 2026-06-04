@@ -19,6 +19,7 @@ from hub.routes import (
     friends,
     health,
     inbox,
+    login_link,
     register,
     send,
     web,
@@ -85,7 +86,7 @@ def create_app(deps: AppDeps, *, run_sweeper: bool = True) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     for mod in (health, admin, register, friends, capabilities, send, inbox,
-                console_login, web):
+                login_link, console_login, web):
         app.include_router(mod.router)
     return app
 

@@ -18,6 +18,11 @@ class HubConfig:
     session_secret: str = "dev-insecure-session-secret"
     # One-time console login link lifetime (short — it is a bearer-equivalent).
     login_link_ttl_s: int = 600
+    # Public base URL of the hub (scheme + host). The single source of truth for
+    # building console login URLs that get printed/shared. The default is a loud
+    # placeholder so an unconfigured deploy yields obviously-broken links rather
+    # than silently-wrong ones (mirrors the relay/MCP .invalid convention).
+    public_url: str = "https://hub.example.invalid"
     # Send the session cookie's Secure attribute (HTTPS-only). Defaults True so a
     # prod deploy behind Railway TLS never emits the CONSOLE-token cookie without
     # Secure; set HUB_SESSION_HTTPS_ONLY=false only for local HTTP dev / tests.
@@ -37,6 +42,7 @@ class HubConfig:
             sender_rate_per_min=int(e.get("HUB_SENDER_RATE_PER_MIN", cls.sender_rate_per_min)),
             session_secret=e.get("HUB_SESSION_SECRET", cls.session_secret),
             login_link_ttl_s=int(e.get("HUB_LOGIN_LINK_TTL_S", cls.login_link_ttl_s)),
+            public_url=e.get("HUB_PUBLIC_URL", cls.public_url),
             session_https_only=(
                 e.get("HUB_SESSION_HTTPS_ONLY", "true").strip().lower()
                 not in ("0", "false", "no", "off")

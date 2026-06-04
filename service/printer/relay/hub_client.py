@@ -62,6 +62,17 @@ class HubClient:
         r.raise_for_status()
         return r.json()
 
+    async def create_login_link(self) -> tuple[str, int]:
+        # POST /login-links (device token): the hub mints a one-time CONSOLE
+        # login link for THIS device's handle and returns the full URL to print
+        # plus its TTL. Device-token scoped because a login link is bearer-
+        # equivalent -- only the handle's own device may mint one. The Pi never
+        # sees the raw code; it prints exactly the URL the hub builds.
+        r = await self._c.post("/login-links", headers=self._dev)
+        r.raise_for_status()
+        body = r.json()
+        return body["url"], body["expires_in_s"]
+
 
 async def register(client: httpx.AsyncClient, *, code: str, handle: str,
                    display_name: str) -> dict[str, Any]:

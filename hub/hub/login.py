@@ -18,6 +18,13 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def login_url(public_url: str, code: str) -> str:
+    """Build the console login URL embedding a one-time code. Single source of
+    truth for both the `mint-login-link` CLI and the device-facing /login-links
+    API, so the URL shape never drifts between them."""
+    return f"{public_url.rstrip('/')}/console/login?lt={code}"
+
+
 async def create_login_link(session: AsyncSession, *, handle: str, ttl_s: int) -> str:
     """Mint a one-time login link for an existing printer handle. Returns the
     plaintext code (embedded in the login URL); only its hash is stored."""

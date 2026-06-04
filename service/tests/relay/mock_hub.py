@@ -46,6 +46,14 @@ class MockHub:
             return {"code": f"CODE{n}", "invite_id": f"inv_{n}",
                     "expires_at": "2026-06-10T00:00:00+00:00"}
 
+        @api.post("/login-links")
+        async def login_links(request: Request) -> dict:
+            self.auth_seen.append(request.headers.get("authorization"))
+            # LoginLinkResp: {url, expires_in_s}. The hub builds the URL from its
+            # own public_url; the relay just prints whatever comes back.
+            return {"url": "https://hub.example.test/console/login?lt=tok123",
+                    "expires_in_s": 600}
+
         @api.get("/friends")
         async def get_friends(request: Request) -> list[dict]:
             self.auth_seen.append(request.headers.get("authorization"))

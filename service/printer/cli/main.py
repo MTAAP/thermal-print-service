@@ -199,6 +199,25 @@ def cmd_hub(args: argparse.Namespace) -> int:
         print(f"invite code: {code}")
         return 0
 
+    if args.hub_cmd == "login-link":
+        # Distinct name from the invite branch's `creds`: a second assignment to
+        # the same local would defeat mypy's None-narrowing inside BOTH nested
+        # closures (the variable would no longer be effectively-final). Same
+        # reason the join/invite branches use distinct nested-function names.
+        ll_creds = CredsStore(paths.creds_path).load()
+        if ll_creds is None:
+            print("not joined; run `printer-svc hub join <code>` first", file=sys.stderr)
+            return 1
+
+        # Two clients: the hub mints the link, the local service prints it.
+        async def _run_login_link() -> tuple[str, int]:
+            async with httpx.AsyncClient(base_url=ll_creds["hub_url"]) as hub_http, \
+                    httpx.AsyncClient(base_url=cfg.local_service_url) as local_http:
+                return await commands.hub_login_link(paths, hub_http, local_http)
+        url, expires_in_s = asyncio.run(_run_login_link())
+        print(f"login link printed; open within {expires_in_s // 60} min:\n{url}")
+        return 0
+
     if args.hub_cmd == "status":
         import json as _json
         print(_json.dumps(commands.hub_status(paths), indent=2))
@@ -214,7 +233,7 @@ def cmd_hub(args: argparse.Namespace) -> int:
         print(f"allow-listed {args.handle}")
         return 0
 
-    print("usage: printer-svc hub {join|invite new|status|leave|friends accept}",
+    print("usage: printer-svc hub {join|invite new|login-link|status|leave|friends accept}",
           file=sys.stderr)
     return 2
 
@@ -266,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
     hisub = hi.add_subparsers(dest="invite_cmd", required=True)
     hisub.add_parser("new", help="create a hub invite code (recorded locally)")
 
+    hsub.add_parser("login-link",
+                    help="mint a console login link and print it (QR + URL) on paper")
     hsub.add_parser("status", help="show hub connection + allow-list")
     hsub.add_parser("leave", help="clear stored hub credentials")
 

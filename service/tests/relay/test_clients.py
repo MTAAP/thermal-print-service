@@ -55,6 +55,16 @@ async def test_hub_client_create_invite_uses_api_token(mock_hub, hub_http):
     assert mock_hub.auth_seen[-1] == "Bearer api-token"
 
 
+async def test_hub_client_create_login_link_uses_device_token(mock_hub, hub_http):
+    hub = HubClient(hub_http, device_token="dev-token", api_token="api-token")
+    # POST /login-links returns {url, expires_in_s}; a login link is device-owned
+    # state, so it must ride the DEVICE token (not the api token).
+    url, expires_in_s = await hub.create_login_link()
+    assert url.endswith("/console/login?lt=tok123")
+    assert expires_in_s == 600
+    assert mock_hub.auth_seen[-1] == "Bearer dev-token"
+
+
 async def test_local_client_maps_status_codes(fake_deps):
     # Reuse the real local service via the existing lifespan_client fixture.
     from tests.conftest import lifespan_client
