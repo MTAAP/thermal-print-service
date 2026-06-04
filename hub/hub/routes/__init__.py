@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from hub.config import HubConfig
 from hub.jobs.wakeup import WakeupRegistry
@@ -14,6 +14,10 @@ class AppDeps:
     sessionmaker: async_sessionmaker[AsyncSession]
     wake: WakeupRegistry
     online: set[str]  # printer ids currently holding an /inbox poll (presence)
+    # The engine is carried so the lifespan can run init_models on the server's
+    # event loop (prod). Tests build deps without it and create tables in their
+    # own fixture, so it defaults to None.
+    engine: AsyncEngine | None = None
 
 
 def bearer(authorization: str | None) -> str:

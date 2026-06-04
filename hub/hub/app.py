@@ -31,6 +31,13 @@ def create_app(deps: AppDeps, *, run_sweeper: bool = True) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.deps = deps
+        # Create tables on the SERVER's event loop, never on a throwaway build
+        # loop: asyncpg connections are bound to the loop that opened them, so a
+        # connection opened during a synchronous build (a different loop) would
+        # poison the pool ("another operation is in progress") on first reuse
+        # under uvicorn. Tests pass engine=None (the fixture inits its own).
+        if deps.engine is not None:
+            await init_models(deps.engine)
         task: asyncio.Task | None = None
         if run_sweeper:
             async def _loop() -> None:
@@ -83,10 +90,12 @@ def create_app(deps: AppDeps, *, run_sweeper: bool = True) -> FastAPI:
     return app
 
 
-async def build_default_app() -> FastAPI:
+def build_default_app() -> FastAPI:
+    # Synchronous on purpose: create_async_engine is lazy (no connection until
+    # first use), so the engine is safe to build with no running loop. The DB is
+    # actually touched in the lifespan, on uvicorn's loop. See the lifespan note.
     cfg = HubConfig.from_env()
     engine = make_engine(cfg.database_url)
-    await init_models(engine)
     deps = AppDeps(config=cfg, sessionmaker=make_sessionmaker(engine),
-                   wake=WakeupRegistry(), online=set())
+                   wake=WakeupRegistry(), online=set(), engine=engine)
     return create_app(deps)

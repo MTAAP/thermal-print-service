@@ -47,7 +47,11 @@ def _normalize_async_url(url: str) -> str:
 
 
 def make_engine(database_url: str) -> AsyncEngine:
-    return create_async_engine(_normalize_async_url(database_url), future=True)
+    # pool_pre_ping: managed Postgres (Railway) recycles idle connections, so a
+    # long-idle hub would otherwise serve a dead connection on the next request.
+    return create_async_engine(
+        _normalize_async_url(database_url), future=True, pool_pre_ping=True
+    )
 
 
 def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

@@ -23,7 +23,7 @@ async def test_build_default_app_boots_and_mounts_all_routers(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
     monkeypatch.setenv("HUB_SESSION_HTTPS_ONLY", "false")
 
-    app = await build_default_app()
+    app = build_default_app()  # synchronous; lifespan opens the DB on uvicorn's loop
     # LifespanManager starts (and on exit cancels) the supervised sweeper task.
     async with (
         LifespanManager(app),
