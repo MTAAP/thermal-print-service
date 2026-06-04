@@ -13,6 +13,10 @@
       <span class="app-brand-name">Printer Pals</span>
       <span>console</span>
     </header>
+    {# Nav is for signed-in consoles only. The public pages (login landing, the
+       /join onboarding form) share this shell but have no session, and showing
+       Friends/Compose/History there would dead-end a not-yet-joined visitor. #}
+    {% if request.session.get("console_token") %}
     <nav class="app-nav" data-testid="nav">
       <a href="/">Friends</a>
       <a href="/compose">Compose</a>
@@ -22,6 +26,7 @@
         <button type="submit" class="btn-ghost" data-testid="logout">Log out</button>
       </form>
     </nav>
+    {% endif %}
     <main class="app-main">{% block content %}{% endblock %}</main>
   </div>
 </body>

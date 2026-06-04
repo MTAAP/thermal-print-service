@@ -76,6 +76,11 @@ async def test_invite_button_htmx_returns_code_fragment_only(web_client):
     assert r.status_code == 200
     # the generated invite code is surfaced in a stable hook
     assert 'data-testid="invite-code"' in r.text
+    # Both onboarding paths are offered: a shareable web /join link (Pi-less
+    # friend) and the raw code for the Pi CLI (`printer-svc hub join <code>`).
+    assert 'data-testid="invite-join-url"' in r.text
+    assert "/join?code=" in r.text
+    assert "printer-svc hub join" in r.text
     # Fragment only -- the full friends page (shell, nav, friends-view) must NOT
     # come back into the #invite-slot innerHTML swap (the duplicate-UI bug).
     for marker in ("app-shell", 'data-testid="nav"', 'data-testid="friends-view"'):

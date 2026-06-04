@@ -5,13 +5,16 @@ from pathlib import Path
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 
+from hub.auth import mint_console_token
 from hub.friends import list_friends
 from hub.history import list_jobs
-from hub.invites import create_invite
+from hub.invites import InviteError, create_invite, redeem_invite
 from hub.routes import AppDeps
+from hub.schemas import RegisterReq
 from hub.send import send_document
-from hub.web_auth import NotAuthenticated, console_printer
+from hub.web_auth import SESSION_TOKEN_KEY, NotAuthenticated, console_printer
 
 router = APIRouter()
 _templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
@@ -63,15 +66,66 @@ async def make_invite(request: Request):
         except NotAuthenticated:
             return _login_redirect()
         code = await create_invite(s, issuer_printer_id=me.id, ttl_s=_INVITE_TTL_S)
+        # One invite, two onboarding paths: a shareable /join link for a friend
+        # with no printer (web-only), and the raw code for a friend with a Pi
+        # (`printer-svc hub join <code>`). The template surfaces both.
+        join = f"{deps.config.public_url.rstrip('/')}/join?code={code}"
         # Interactive request: return only the invite-code fragment that the
         # friends page also includes, so HTMX swaps it into #invite-slot alone.
         if _is_htmx(request):
-            return _templates.TemplateResponse(request, "invite_code.html", {"invite_code": code})
+            return _templates.TemplateResponse(
+                request, "invite_code.html", {"invite_code": code, "join_url": join}
+            )
         friends = await list_friends(s, me.id, online_ids=deps.online)
     # No-JS fallback: the full friends page, with the code rendered in its slot.
     return _templates.TemplateResponse(request, "friends.html", {
-        "me": me.handle, "friends": friends, "invite_code": code,
+        "me": me.handle, "friends": friends, "invite_code": code, "join_url": join,
     })
+
+
+@router.get("/join")
+async def join_view(request: Request, code: str | None = None):
+    # Public onboarding page. Prefills the invite code from the query param so a
+    # shared /join?code=... link is a single click. No session required -- this
+    # is how a friend WITHOUT a Pi gets into the console at all.
+    return _templates.TemplateResponse(request, "join.html", {"code": code})
+
+
+@router.post("/join")
+async def join_submit(
+    request: Request,
+    code: str = Form(...),
+    handle: str = Form(...),
+    display_name: str = Form(...),
+):
+    deps: AppDeps = request.app.state.deps
+    # Validate via the same RegisterReq contract the JSON /register path uses, so
+    # a web-joined handle obeys the identical rules (no divergent validation).
+    try:
+        req = RegisterReq(code=code.strip(), handle=handle.strip(),
+                          display_name=display_name.strip())
+    except ValidationError:
+        return _templates.TemplateResponse(request, "join.html", {
+            "code": code, "handle": handle, "display_name": display_name,
+            "error": "Handle must be 1-40 characters: lowercase letters, "
+                     "numbers, dashes or underscores.",
+        })
+    async with deps.sessionmaker() as s:
+        try:
+            reg = await redeem_invite(
+                s, code=req.code, handle=req.handle, display_name=req.display_name
+            )
+        except InviteError as exc:
+            return _templates.TemplateResponse(request, "join.html", {
+                "code": code, "handle": handle, "display_name": display_name,
+                "error": str(exc),
+            })
+        # Redeemed: establish a console session immediately (same CONSOLE token
+        # mechanism as the login link) so a Pi-less friend is signed in without a
+        # Pi to print a link or any hub-CLI access -- the onboarding wall.
+        token = await mint_console_token(s, reg.printer_id)
+    request.session[SESSION_TOKEN_KEY] = token
+    return RedirectResponse(url="/", status_code=303)
 
 
 # The v1 composer uses ONLY the documented common-core block set that is stable

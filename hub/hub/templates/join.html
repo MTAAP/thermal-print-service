@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="view view-join" data-testid="join-view">
+  <h1 class="view-title">Join Printer Pals</h1>
+  <p class="join-note">Redeem a friend's invite to get your console. No printer of your own needed
+    to send to friends who have one.</p>
+  {% if error %}
+  <p class="login-note login-invalid" data-testid="join-error">{{ error }}</p>
+  {% endif %}
+  <form class="join-form" method="post" action="/join">
+    <label class="field"><span class="field-label">Invite code</span>
+      <input type="text" name="code" value="{{ code or '' }}" required data-testid="join-code">
+    </label>
+    <label class="field"><span class="field-label">Handle</span>
+      <input type="text" name="handle" value="{{ handle or '' }}" required
+             pattern="[a-z0-9_-]+" data-testid="join-handle">
+    </label>
+    <label class="field"><span class="field-label">Display name</span>
+      <input type="text" name="display_name" value="{{ display_name or '' }}" required
+             data-testid="join-display-name">
+    </label>
+    <button type="submit" data-testid="join-button">Join</button>
+  </form>
+</section>
+{% endblock %}
