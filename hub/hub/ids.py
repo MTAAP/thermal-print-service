@@ -14,4 +14,11 @@ def new_token() -> str:
 
 
 def new_invite_code() -> str:
-    return secrets.token_urlsafe(9)
+    # token_urlsafe draws from [A-Za-z0-9_-]. A leading '-' or '_' is hostile to
+    # CLI positionals (`printer-svc hub join <code>` -> argparse reads it as a
+    # flag, not the code) and awkward in URLs, so reject those first characters.
+    # Re-rolling keeps full entropy for the codes we keep (no biased first byte).
+    while True:
+        code = secrets.token_urlsafe(9)
+        if code[0] not in "-_":
+            return code
