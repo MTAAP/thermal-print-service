@@ -1,10 +1,13 @@
+import asyncio
+
 import pytest
 from sqlalchemy import select
 
 from hub.auth import TokenKind, authenticate
+from hub.db import init_models, make_engine, make_sessionmaker
 from hub.ids import new_id
 from hub.invites import InviteError, create_invite, redeem_invite
-from hub.models import Friendship, Printer
+from hub.models import Friendship, Printer, Token
 from tests.conftest import now
 
 
@@ -65,6 +68,45 @@ async def test_reused_invite_creates_no_second_printer(sm):
             await redeem_invite(s, code=code, handle="bob", display_name="Bob")
         printers = (await s.execute(select(Printer))).scalars().all()
         assert [p.handle for p in printers] == ["alice"]
+
+
+async def test_concurrent_redeem_single_invite_creates_one_printer_and_token_pair(tmp_path):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'hub.db'}")
+    await init_models(engine)
+    sm = make_sessionmaker(engine)
+    try:
+        async with sm() as s:
+            code = await create_invite(s, issuer_printer_id=None, ttl_s=3600)
+
+        async def redeem(handle: str):
+            async with sm() as s:
+                try:
+                    return await redeem_invite(
+                        s, code=code, handle=handle, display_name=handle.title()
+                    )
+                except InviteError as exc:
+                    return exc
+
+        results = await asyncio.gather(redeem("alice"), redeem("bob"))
+        winners = [result for result in results if not isinstance(result, InviteError)]
+        losers = [result for result in results if isinstance(result, InviteError)]
+        assert len(winners) == 1
+        assert len(losers) == 1
+
+        async with sm() as s:
+            printers = (
+                await s.execute(select(Printer).where(Printer.handle.in_(("alice", "bob"))))
+            ).scalars().all()
+            assert [p.handle for p in printers] == [winners[0].handle]
+            token_rows = (
+                await s.execute(select(Token).where(Token.printer_id == winners[0].printer_id))
+            ).scalars().all()
+            assert sorted(t.kind for t in token_rows) == [
+                TokenKind.API.value,
+                TokenKind.DEVICE.value,
+            ]
+    finally:
+        await engine.dispose()
 
 
 async def test_duplicate_handle_rejected(sm):

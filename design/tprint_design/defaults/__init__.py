@@ -9,14 +9,20 @@ from __future__ import annotations
 import re
 from importlib.resources import files
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 _PACKAGE_ROOT = Path(__file__).parent.parent
 _FONT_DIR = _PACKAGE_ROOT / "fonts"
 
 # Substring `"<base"` would also match the deprecated `<basefont>` element
-# and produce a false positive; this pattern requires whitespace or `>`
+# and produce a false positive; this pattern requires whitespace, `/`, or `>`
 # right after `base` so only the real <base> tag short-circuits injection.
-_USER_BASE_RE = re.compile(r"<base[\s>]", re.IGNORECASE)
+_BASE_TAG_RE = re.compile(r"<base(?=[\s>/])[^>]*>", re.IGNORECASE)
+_BASE_HREF_RE = re.compile(
+    r"""(?P<prefix>\bhref\s*=\s*)"""
+    r"""(?:(?P<quote>["'])(?P<quoted>[^"']*)(?P=quote)|(?P<unquoted>[^\s>]+))""",
+    re.IGNORECASE,
+)
 
 _FONT_FACES: list[tuple[str, str, dict[str, str]]] = [
     ("IBM Plex Sans",   "IBMPlexSans-Medium.ttf",   {}),
@@ -85,6 +91,7 @@ def inject_into(html: str, source_path: Path | None = None) -> str:
     envelope that includes one. Idempotency is not guaranteed — calling
     twice will inject twice; callers compile from source HTML.
     """
+    html = _normalize_user_base(html, source_path)
     head_block = _build_head_block(html, source_path)
     lower = html.lower()
     head_open_idx = lower.find("<head")
@@ -119,10 +126,44 @@ def _build_head_block(html: str, source_path: Path | None) -> str:
     against URL-bearing additions to the injected styles.
     """
     style = _injected_style()
-    if source_path is None or _USER_BASE_RE.search(html):
+    if source_path is None or _BASE_TAG_RE.search(html):
         return style
     # Trailing slash is load-bearing: `<base href="file:///foo">` resolves
     # `./bar` to `file:///bar` (treating `foo` as a filename), while
     # `file:///foo/` resolves it to `file:///foo/bar`.
     base_uri = source_path.resolve().parent.as_uri() + "/"
     return f'<base href="{base_uri}">{style}'
+
+
+def _normalize_user_base(html: str, source_path: Path | None) -> str:
+    if source_path is None:
+        return html
+    match = _BASE_TAG_RE.search(html)
+    if match is None:
+        return html
+
+    tag = match.group(0)
+    href_match = _BASE_HREF_RE.search(tag)
+    if href_match is None:
+        return html
+
+    href = href_match.group("quoted")
+    if href is None:
+        href = href_match.group("unquoted") or ""
+    if _is_absolute_base_href(href):
+        return html
+
+    source_dir_uri = source_path.resolve().parent.as_uri() + "/"
+    resolved = urljoin(source_dir_uri, href)
+    new_tag = (
+        tag[:href_match.start()]
+        + f'{href_match.group("prefix")}"{resolved}"'
+        + tag[href_match.end():]
+    )
+    return html[:match.start()] + new_tag + html[match.end():]
+
+
+def _is_absolute_base_href(href: str) -> bool:
+    if href.startswith("//"):
+        return True
+    return bool(urlparse(href).scheme)

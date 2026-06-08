@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from tprint_design.defaults import font_dir_uri, inject_into
 from tprint_design.lint import LintFinding, LintSeverity
+from tprint_design.render import _is_allowed_subresource
 
 _WALK_JS = r"""
 () => {
@@ -250,8 +251,10 @@ def pre_render_lint(
     final_html = inject_into(html, source_path=source_path)
     fonts_uri = font_dir_uri()
     source_dir_uri: str | None = None
+    source_dir_real: Path | None = None
     if source_path is not None:
-        source_dir_uri = source_path.resolve().parent.as_uri() + "/"
+        source_dir_real = source_path.resolve().parent
+        source_dir_uri = source_dir_real.as_uri() + "/"
 
     blocked_urls: list[str] = []
 
@@ -272,14 +275,13 @@ def pre_render_lint(
 
                 def _route(route):
                     url = route.request.url
-                    if (
-                        url.startswith("data:")
-                        or url.startswith(render_dir_uri)
-                        or url.startswith(fonts_uri)
+                    if _is_allowed_subresource(
+                        url,
+                        render_dir_uri=render_dir_uri,
+                        fonts_uri=fonts_uri,
+                        source_dir_uri=source_dir_uri,
+                        source_dir_real=source_dir_real,
                     ):
-                        route.continue_()
-                        return
-                    if source_dir_uri is not None and url.startswith(source_dir_uri):
                         route.continue_()
                         return
                     blocked_urls.append(url)

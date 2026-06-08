@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import time
@@ -7,6 +9,7 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hub.capabilities import CapabilityError, schema_for_recipient, validate_document
@@ -20,21 +23,58 @@ from hub.schemas import SendResp, SendResult
 _WINDOW: dict[str, deque[float]] = defaultdict(deque)
 
 
+class SendConflict(Exception):
+    """A sender reused an idempotency key for a different request identity."""
+
+    def __init__(self, detail: dict) -> None:
+        super().__init__(detail["message"])
+        self.detail = detail
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _payload_hash(to: list[str], document: dict | None, raw_png_b64: str | None) -> str:
-    # The recipient set is part of the request identity, not just the payload.
-    # Excluding `to` let a replay with the same key but different recipients match
-    # a prior receipt and return the WRONG job ids. Sorted so recipient order
-    # never changes the hash. A same-key replay with a different `to` now misses
-    # the receipt and hits the (sender_handle, idempotency_key) unique constraint
-    # -- a loud failure, never a silent wrong-recipient match.
+def _payload_kind(document: dict | None, raw_png_b64: str | None) -> str:
+    if bool(document) == bool(raw_png_b64):
+        raise ValueError("provide exactly one of `document` or `raw_png_b64`")
+    if raw_png_b64:
+        try:
+            base64.b64decode(raw_png_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"raw_png_b64 is not valid base64: {exc}") from exc
+        return "raw"
+    return "document"
+
+
+def _payload_hash(
+    to: list[str], payload_kind: str, document: dict | None, raw_png_b64: str | None
+) -> str:
+    # Idempotency is scoped to the exact recipient list and payload type/value.
+    # A sender reusing a key with any changed request identity gets a controlled
+    # conflict before new jobs are created or the DB unique constraint is reached.
     blob = json.dumps(
-        {"to": sorted(to), "d": document, "r": raw_png_b64}, sort_keys=True
+        {
+            "to": to,
+            "payload": {
+                "kind": payload_kind,
+                "document": document,
+                "raw_png_b64": raw_png_b64,
+            },
+        },
+        sort_keys=True,
     ).encode()
     return hashlib.sha256(blob).hexdigest()
+
+
+def _replay_receipt(prior: SendReceipt) -> SendResp:
+    stored = prior.job_ids
+    if stored and all(isinstance(item, dict) for item in stored):
+        return SendResp(results=[SendResult.model_validate(item) for item in stored])
+    return SendResp(results=[
+        SendResult(to=handle, status="queued", job_id=job_id)
+        for handle, job_id in stored
+    ])
 
 
 def _throttled(sender_handle: str, limit_per_min: int) -> bool:
@@ -53,9 +93,10 @@ async def send_document(
     to: list[str], document: dict | None, idempotency_key: str | None,
     sender_rate_per_min: int, raw_png_b64: str | None = None,
 ) -> SendResp:
-    payload_hash = _payload_hash(to, document, raw_png_b64)
+    payload_kind = _payload_kind(document, raw_png_b64)
+    payload_hash = _payload_hash(to, payload_kind, document, raw_png_b64)
 
-    # Send-level idempotency (per sender). Same key+payload -> original job ids.
+    # Send-level idempotency (per sender). Same key+request -> original results.
     if idempotency_key:
         prior = (
             await session.execute(
@@ -65,11 +106,12 @@ async def send_document(
                 )
             )
         ).scalar_one_or_none()
-        if prior is not None and prior.payload_hash == payload_hash:
-            return SendResp(results=[
-                SendResult(to=h, status="queued", job_id=jid)
-                for h, jid in prior.job_ids
-            ])
+        if prior is not None:
+            if prior.payload_hash == payload_hash:
+                return _replay_receipt(prior)
+            raise SendConflict({
+                "message": "idempotency_key already used for a different send request"
+            })
 
     sender = (
         await session.execute(select(Printer).where(Printer.handle == sender_handle))
@@ -103,19 +145,45 @@ async def send_document(
         job_id = new_id("job")
         session.add(Job(
             id=job_id, sender_handle=sender_handle, recipient_id=recipient_id,
-            state="queued", kind=("raw" if raw_png_b64 else "document"),
-            payload=({"raw_png_b64": raw_png_b64} if raw_png_b64 else {"document": document}),
+            state="queued", kind=payload_kind,
+            payload=(
+                {"raw_png_b64": raw_png_b64}
+                if payload_kind == "raw"
+                else {"document": document}
+            ),
             sent_at=sent_at, created_at=_now(), lease_expires_at=None, leased_by=None,
         ))
         results.append(SendResult(to=handle, status="queued", job_id=job_id))
         created.append((handle, job_id))
 
-    if idempotency_key and created:
+    if idempotency_key:
         session.add(SendReceipt(
             sender_handle=sender_handle, idempotency_key=idempotency_key,
-            payload_hash=payload_hash, job_ids=created, created_at=_now(),
+            payload_hash=payload_hash,
+            job_ids=[r.model_dump() for r in results],
+            created_at=_now(),
         ))
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        if not idempotency_key:
+            raise
+        await session.rollback()
+        prior = (
+            await session.execute(
+                select(SendReceipt).where(
+                    SendReceipt.sender_handle == sender_handle,
+                    SendReceipt.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is None:
+            raise
+        if prior.payload_hash == payload_hash:
+            return _replay_receipt(prior)
+        raise SendConflict({
+            "message": "idempotency_key already used for a different send request"
+        }) from exc
 
     # Wake held polls only after the rows are committed.
     for _h, jid in created:

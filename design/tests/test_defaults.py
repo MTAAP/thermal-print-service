@@ -102,6 +102,44 @@ def test_inject_skips_base_when_user_has_one(tmp_path):
     assert tmp_path.resolve().as_uri() not in out
 
 
+def test_inject_preserves_user_absolute_base(tmp_path):
+    src = tmp_path / "design.html"
+    user_html = (
+        '<head><base href="https://cdn.example.com/assets/"></head>'
+        "<body><p>x</p></body>"
+    )
+    out = defaults.inject_into(user_html, source_path=src)
+    assert out.count("<base ") == 1
+    assert 'href="https://cdn.example.com/assets/"' in out
+    assert tmp_path.resolve().as_uri() not in out
+
+
+def test_inject_rewrites_quoted_relative_user_base_against_source_path(tmp_path):
+    src = tmp_path / "design.html"
+    user_html = (
+        '<head><base href="./assets/"></head>'
+        "<body><img src='logo.png'></body>"
+    )
+    out = defaults.inject_into(user_html, source_path=src)
+    expected = (src.parent / "assets").resolve().as_uri() + "/"
+    assert out.count("<base ") == 1
+    assert f'<base href="{expected}">' in out
+    assert 'href="./assets/"' not in out
+
+
+def test_inject_rewrites_unquoted_relative_user_base_against_source_path(tmp_path):
+    src = tmp_path / "design.html"
+    user_html = (
+        "<head><base href=assets/></head>"
+        "<body><img src='logo.png'></body>"
+    )
+    out = defaults.inject_into(user_html, source_path=src)
+    expected = (src.parent / "assets").resolve().as_uri() + "/"
+    assert out.count("<base ") == 1
+    assert f'<base href="{expected}">' in out
+    assert "href=assets/" not in out
+
+
 def test_inject_skips_base_when_no_source_path():
     html = "<body><p>x</p></body>"
     out = defaults.inject_into(html)

@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from hub.auth import TokenKind, authenticate
 from hub.routes import AppDeps, bearer
 from hub.schemas import SendReq
-from hub.send import send_document
+from hub.send import SendConflict, send_document
 
 router = APIRouter()
 
@@ -26,12 +26,15 @@ async def post_send(request: Request, body: SendReq,
                 continue
         if me is None:
             raise HTTPException(status_code=403, detail="send requires api or console token")
-        resp = await send_document(
-            s, deps.wake, sender_handle=me.handle, to=body.to,
-            document=body.document, raw_png_b64=body.raw_png_b64,
-            idempotency_key=body.idempotency_key,
-            sender_rate_per_min=deps.config.sender_rate_per_min,
-        )
+        try:
+            resp = await send_document(
+                s, deps.wake, sender_handle=me.handle, to=body.to,
+                document=body.document, raw_png_b64=body.raw_png_b64,
+                idempotency_key=body.idempotency_key,
+                sender_rate_per_min=deps.config.sender_rate_per_min,
+            )
+        except SendConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.detail) from exc
     any_ok = any(r.status == "queued" for r in resp.results)
     code = 202 if any_ok else 400
     return JSONResponse(status_code=code, content=resp.model_dump())

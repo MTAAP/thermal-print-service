@@ -47,7 +47,9 @@ async def authenticate(
 async def mint_console_token(session: AsyncSession, printer_id: str) -> str:
     """Mint a CONSOLE-class token for a printer. The plaintext is returned once
     (it rides in the signed session cookie); only the hash is stored, so the
-    token stays independently revocable per §9.1."""
+    token stays independently revocable per §9.1. The caller owns the commit so
+    a console token can be minted in the same transaction as the action granting
+    it, such as one-time login-link consumption."""
     from datetime import UTC, datetime
 
     from hub.ids import new_id
@@ -56,7 +58,6 @@ async def mint_console_token(session: AsyncSession, printer_id: str) -> str:
     session.add(Token(id=new_id("tok"), printer_id=printer_id,
                       kind=TokenKind.CONSOLE.value, token_hash=h,
                       revoked_at=None, created_at=datetime.now(UTC)))
-    await session.commit()
     return plaintext
 
 

@@ -1,5 +1,4 @@
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from hub.capabilities import upsert_capability
 from hub.invites import create_invite, redeem_invite
@@ -86,23 +85,39 @@ async def test_idempotent_send_returns_same_job_ids(sm):
         assert r1.results[0].job_id == r2.results[0].job_id
 
 
-async def test_idempotency_key_is_scoped_to_recipients(sm):
-    # The idempotency key identifies a (recipients + payload) request, not just a
-    # payload. Reusing a key with a DIFFERENT recipient must NOT return the first
-    # job's id for the new recipient. With `to` in the hash it misses the receipt
-    # and trips the (sender, key) unique constraint -- a loud failure, never a
-    # silent wrong-recipient match (which is what happened before the fix).
+async def test_idempotent_send_replays_full_partial_result_set(sm):
+    # Idempotency is send-level, not job-only: replay the exact per-recipient
+    # outcome list, including failures that did not create jobs.
     wake = WakeupRegistry()
     async with sm() as s:
-        alice, bob = await _two_friends_with_caps(s)
-        await _join(s, "carol", issuer=alice.printer_id)  # alice's friend, no caps
+        _alice, _bob = await _two_friends_with_caps(s)
+        await _join(s, "carol")  # exists but is not alice's friend
         doc = {"blocks": [{"type": "paragraph"}]}
-        r1 = await send_document(s, wake, sender_handle="alice", to=["bob"],
-                                 document=doc, idempotency_key="k1", sender_rate_per_min=30)
-        assert r1.results[0].status == "queued"
-        with pytest.raises(IntegrityError):
-            await send_document(s, wake, sender_handle="alice", to=["carol"],
-                                document=doc, idempotency_key="k1", sender_rate_per_min=30)
+        r1 = await send_document(
+            s, wake, sender_handle="alice", to=["bob", "carol", "ghost"],
+            document=doc, idempotency_key="k2", sender_rate_per_min=30)
+        r2 = await send_document(
+            s, wake, sender_handle="alice", to=["bob", "carol", "ghost"],
+            document=doc, idempotency_key="k2", sender_rate_per_min=30)
+
+        assert r2.model_dump() == r1.model_dump()
+        assert [r.status for r in r2.results] == ["queued", "not_friend", "recipient_unknown"]
+
+
+async def test_raw_send_queues_raw_job_payload(sm):
+    wake = WakeupRegistry()
+    async with sm() as s:
+        _alice, _bob = await _two_friends_with_caps(s)
+        resp = await send_document(
+            s, wake, sender_handle="alice", to=["bob"],
+            document=None, raw_png_b64="aGk=", idempotency_key=None, sender_rate_per_min=30)
+        assert resp.results[0].status == "queued"
+
+        from hub.models import Job
+
+        job = await s.get(Job, resp.results[0].job_id)
+        assert job.kind == "raw"
+        assert job.payload == {"raw_png_b64": "aGk="}
 
 
 def test_sendreq_requires_exactly_one_payload():
@@ -127,6 +142,45 @@ def test_sendreq_requires_exactly_one_payload():
     # each valid form on its own
     assert SendReq(to=["bob"], document=doc).raw_png_b64 is None
     assert SendReq(to=["bob"], raw_png_b64="aGk=").document is None
+
+
+async def test_send_route_conflicts_on_same_key_changed_request(app_client):
+    client, deps = app_client
+    async with deps.sessionmaker() as s:
+        alice, _bob = await _two_friends_with_caps(s)
+
+    first = await client.post(
+        "/send",
+        headers={"Authorization": f"Bearer {alice.api_token}"},
+        json={
+            "to": ["bob"],
+            "document": {"blocks": [{"type": "paragraph"}]},
+            "idempotency_key": "same-key",
+        },
+    )
+    assert first.status_code == 202
+
+    changed_recipients = await client.post(
+        "/send",
+        headers={"Authorization": f"Bearer {alice.api_token}"},
+        json={
+            "to": ["bob", "ghost"],
+            "document": {"blocks": [{"type": "paragraph"}]},
+            "idempotency_key": "same-key",
+        },
+    )
+    assert changed_recipients.status_code == 409
+
+    changed_payload = await client.post(
+        "/send",
+        headers={"Authorization": f"Bearer {alice.api_token}"},
+        json={
+            "to": ["bob"],
+            "document": {"blocks": []},
+            "idempotency_key": "same-key",
+        },
+    )
+    assert changed_payload.status_code == 409
 
 
 async def test_sender_throttle(sm):

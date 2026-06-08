@@ -78,6 +78,7 @@ async def consume_login_link(session: AsyncSession, *, code: str) -> str:
         ),
     )
     if result.rowcount != 1:
+        await session.rollback()
         raise LoginLinkError("login link already used")
     token = await mint_console_token(session, link.printer_id)
     await session.commit()

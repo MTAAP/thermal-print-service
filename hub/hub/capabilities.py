@@ -16,6 +16,14 @@ class CapabilityError(Exception):
         self.detail = detail
 
 
+class CapabilityConflict(Exception):
+    """A renderer_version was re-reported with a different schema fingerprint."""
+
+    def __init__(self, detail: dict[str, Any]) -> None:
+        super().__init__(detail["message"])
+        self.detail = detail
+
+
 async def upsert_capability(
     session: AsyncSession, *, printer_id: str, renderer_version: str,
     blocks_schema: dict, block_types: list[str],
@@ -24,9 +32,11 @@ async def upsert_capability(
     if cap is None:
         session.add(Capability(renderer_version=renderer_version,
                                blocks_schema=blocks_schema, block_types=block_types))
-    else:
-        cap.blocks_schema = blocks_schema
-        cap.block_types = block_types
+    elif cap.blocks_schema != blocks_schema or cap.block_types != block_types:
+        raise CapabilityConflict({
+            "message": "renderer_version already has a different capability report",
+            "renderer_version": renderer_version,
+        })
     printer = await session.get(Printer, printer_id)
     if printer is not None:
         printer.renderer_version = renderer_version

@@ -83,3 +83,16 @@ async def test_compose_requires_session(app_client):
     r = await client.get("/compose", follow_redirects=False)
     assert r.status_code in (302, 303)
     assert "/console/login" in r.headers["location"]
+
+
+async def test_compose_htmx_post_without_session_redirects_browser(app_client):
+    client, _ = app_client
+    r = await client.post(
+        "/compose",
+        data={"to": ["bob"], "title": "", "message": "hi"},
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 204
+    assert r.headers["HX-Redirect"] == "/console/login"
+    assert r.text == ""

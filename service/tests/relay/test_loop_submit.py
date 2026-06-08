@@ -126,3 +126,31 @@ async def test_redelivered_hub_job_is_not_reprinted(relay_paths, mock_hub, hub_h
     # Re-acked (idempotent) so the hub stops redelivering, and re-reported printed.
     assert mock_hub.acked == ["hj1", "hj1"]
     assert ("hj1", "printed") in mock_hub.statuses
+
+
+async def test_preseeded_jobmap_redelivery_is_not_locally_submitted(
+    relay_paths, mock_hub, hub_http
+):
+    """A relay restart can see a redelivered hub job only through the durable
+    JobMap. That preexisting map entry must suppress local submission entirely."""
+    cfg = _cfg(relay_paths)
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    JobMap(relay_paths.jobmap_path).put(
+        "hj-preseed", local_job_id="loc-preseed", last_status="delivered"
+    )
+    local = _CountingLocal()
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+    await client.process_job({
+        "job_id": "hj-preseed", "sender": "alice", "kind": "document",
+        "sent_at": "2026-06-03T14:32:00+00:00",
+        "payload": {"document": {"blocks": [{"type": "paragraph", "text": "hi"}]}},
+    })
+
+    assert local.submits == 0
+    assert mock_hub.acked == ["hj-preseed"]
+    assert ("hj-preseed", "printed") in mock_hub.statuses

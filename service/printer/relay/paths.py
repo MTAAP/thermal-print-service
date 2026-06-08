@@ -30,3 +30,7 @@ class RelayPaths:
         # Append-only JSONL: each line is a hub_job_id -> {local_job_id,
         # last_status} update. The last line for a job id wins on replay.
         return self.root / "jobmap.jsonl"
+
+    @property
+    def rate_path(self) -> Path:
+        return self.root / "rate.json"

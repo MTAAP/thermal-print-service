@@ -95,3 +95,15 @@ async def test_invite_button_no_js_returns_full_page(web_client):
     # No-JS fallback: the whole friends page, code rendered in its slot.
     assert 'data-testid="friends-view"' in r.text
     assert "app-shell" in r.text
+
+
+async def test_invite_button_htmx_without_session_redirects_browser(app_client):
+    client, _ = app_client
+    r = await client.post(
+        "/friends/invite",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 204
+    assert r.headers["HX-Redirect"] == "/console/login"
+    assert r.text == ""

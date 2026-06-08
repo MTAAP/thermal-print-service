@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, timedelta
+from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hub.auth import TokenKind, hash_token, mint_token
@@ -39,17 +40,10 @@ async def create_invite(
 async def redeem_invite(
     session: AsyncSession, *, code: str, handle: str, display_name: str
 ) -> RegisterResp:
-    # Lock the invite row for the duration of the redeem. Unlike the login link,
-    # we can't make the single-use check a conditional UPDATE-first: redeemed_by
-    # is an FK to printer.id, which doesn't exist until we create the printer
-    # below. So serialize concurrent redeems of the same code with FOR UPDATE --
-    # the second redeem blocks until the first commits, then reads redeemed_by as
-    # set and is rejected, instead of both racing past the check and minting two
-    # printers + two token pairs from one invite. No-op on SQLite (tests are
-    # serial); a real row lock on Postgres (the single-replica prod DB).
+    code_hash = hash_token(code)
     inv = (
         await session.execute(
-            select(Invite).where(Invite.code_hash == hash_token(code)).with_for_update()
+            select(Invite).where(Invite.code_hash == code_hash)
         )
     ).scalar_one_or_none()
     if inv is None:
@@ -81,6 +75,18 @@ async def redeem_invite(
     # leaves FK enforcement off by default, which is why this hid in tests.
     await session.flush()
 
+    claim = cast(
+        "CursorResult",
+        await session.execute(
+            update(Invite)
+            .where(Invite.code_hash == code_hash, Invite.redeemed_by.is_(None))
+            .values(redeemed_by=printer.id)
+        ),
+    )
+    if claim.rowcount != 1:
+        await session.rollback()
+        raise InviteError("invite already redeemed")
+
     dev_plain, dev_hash = mint_token()
     api_plain, api_hash = mint_token()
     session.add(Token(id=new_id("tok"), printer_id=printer.id, kind=TokenKind.DEVICE.value,
@@ -102,7 +108,6 @@ async def redeem_invite(
         session.add(Friendship(owner_id=printer.id, friend_id=issuer.id,
                                origin_invite_id=inv.id, created_at=_now()))
 
-    inv.redeemed_by = printer.id
     await session.commit()
     return RegisterResp(
         printer_id=printer.id, handle=printer.handle,

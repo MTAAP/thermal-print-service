@@ -1,8 +1,14 @@
 import asyncio
+import base64
+import io
 
 import pytest
+from PIL import Image
+from printer_core.constants import PRINT_HEAD_WIDTH_PX
 
 from printer.relay.config import RelayConfig
+from printer.relay.hub_client import HubClient
+from printer.relay.local_client import SubmitOutcome, SubmitResult
 from printer.relay.loop import RelayClient
 from printer.relay.store import AllowList, CredsStore
 
@@ -13,6 +19,28 @@ def _cfg(relay_paths):
         "PRINTER_RELAY_STATE_DIR": str(relay_paths.root),
         "PRINTER_RELAY_RATE_PER_HOUR": "2",
     })
+
+
+def _raw_b64(width: int = PRINT_HEAD_WIDTH_PX, height: int = 8) -> str:
+    buf = io.BytesIO()
+    Image.new("L", (width, height), color=255).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+class _CountingAcceptedLocal:
+    def __init__(self) -> None:
+        self.submits = 0
+
+    async def print_document(self, document, *, sender, idempotency_key):
+        self.submits += 1
+        return SubmitResult(SubmitOutcome.ACCEPTED, local_job_id="loc1")
+
+    async def print_raw(self, png_bytes, *, sender, idempotency_key):
+        self.submits += 1
+        return SubmitResult(SubmitOutcome.ACCEPTED, local_job_id="loc1")
+
+    async def get_job_status(self, local_job_id):
+        return "printed"
 
 
 async def test_non_allowlisted_sender_rejected(relay_paths, mock_hub, hub_http, fake_deps):
@@ -175,6 +203,118 @@ async def test_malformed_payload_shapes_marked_failed_not_looped(
     assert mock_hub.acked == []
 
 
+async def test_raw_base64_with_ignored_garbage_fails_before_local_submit(
+    relay_paths, mock_hub, hub_http
+):
+    cfg = _cfg(relay_paths)
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    local = _CountingAcceptedLocal()
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+
+    await client.process_job({
+        "job_id": "hj-b64-garbage", "sender": "alice", "kind": "raw",
+        "sent_at": "2026-06-03T14:00:00+00:00",
+        "payload": {"raw_png_b64": _raw_b64() + "!!!!"},
+    })
+    await client.join_watchers()
+
+    assert local.submits == 0
+    assert ("hj-b64-garbage", "failed") in mock_hub.statuses
+    assert mock_hub.acked == []
+
+
+async def test_raw_payload_over_base64_cap_fails_before_local_submit(
+    relay_paths, mock_hub, hub_http
+):
+    cfg = RelayConfig.from_env({
+        "HUB_URL": "http://hub.test",
+        "PRINTER_RELAY_STATE_DIR": str(relay_paths.root),
+        "PRINTER_RELAY_MAX_RAW_BASE64_CHARS": "16",
+    })
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    local = _CountingAcceptedLocal()
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+
+    await client.process_job({
+        "job_id": "hj-b64-cap", "sender": "alice", "kind": "raw",
+        "sent_at": "2026-06-03T14:00:00+00:00",
+        "payload": {"raw_png_b64": _raw_b64()},
+    })
+    await client.join_watchers()
+
+    assert local.submits == 0
+    assert ("hj-b64-cap", "failed") in mock_hub.statuses
+    assert mock_hub.acked == []
+
+
+async def test_raw_payload_over_decoded_body_cap_fails_before_local_submit(
+    relay_paths, mock_hub, hub_http
+):
+    cfg = RelayConfig.from_env({
+        "HUB_URL": "http://hub.test",
+        "PRINTER_RELAY_STATE_DIR": str(relay_paths.root),
+        "PRINTER_RELAY_MAX_RAW_BYTES": "16",
+    })
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    local = _CountingAcceptedLocal()
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+
+    await client.process_job({
+        "job_id": "hj-body-cap", "sender": "alice", "kind": "raw",
+        "sent_at": "2026-06-03T14:00:00+00:00",
+        "payload": {"raw_png_b64": _raw_b64()},
+    })
+    await client.join_watchers()
+
+    assert local.submits == 0
+    assert ("hj-body-cap", "failed") in mock_hub.statuses
+    assert mock_hub.acked == []
+
+
+async def test_raw_payload_over_pixel_cap_fails_before_local_submit(
+    relay_paths, mock_hub, hub_http
+):
+    cfg = RelayConfig.from_env({
+        "HUB_URL": "http://hub.test",
+        "PRINTER_RELAY_STATE_DIR": str(relay_paths.root),
+        "PRINTER_RELAY_MAX_DECODED_IMAGE_PIXELS": "100",
+    })
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    local = _CountingAcceptedLocal()
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+
+    await client.process_job({
+        "job_id": "hj-pixel-cap", "sender": "alice", "kind": "raw",
+        "sent_at": "2026-06-03T14:00:00+00:00",
+        "payload": {"raw_png_b64": _raw_b64(height=2)},
+    })
+    await client.join_watchers()
+
+    assert local.submits == 0
+    assert ("hj-pixel-cap", "failed") in mock_hub.statuses
+    assert mock_hub.acked == []
+
+
 async def test_run_forever_survives_non_httpx_error(relay_paths, monkeypatch):
     """A non-httpx error from a poll cycle (e.g. OSError from a fsync, or a
     JSONDecodeError from a corrupted 200) must be caught and backed off, not kill
@@ -206,3 +346,29 @@ async def test_run_forever_survives_non_httpx_error(relay_paths, monkeypatch):
     # n==2 proves the first (non-httpx) error did NOT propagate: the loop caught it
     # and came back for a second cycle.
     assert calls["n"] == 2
+
+
+async def test_run_forever_stops_after_creds_are_deleted(relay_paths, monkeypatch):
+    CredsStore(relay_paths.creds_path).save({
+        "printer_id": "p", "handle": "me", "hub_url": "http://hub.test",
+        "device_token": "d", "api_token": "a",
+    })
+    cfg = _cfg(relay_paths)
+    client = RelayClient(cfg, relay_paths)
+    calls = {"n": 0}
+
+    async def fake_poll():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            CredsStore(relay_paths.creds_path).clear()
+            return
+        raise AssertionError("relay continued polling after hub leave")
+
+    async def fail_sleep(*_a, **_k):
+        raise AssertionError("relay backed off instead of stopping after hub leave")
+
+    monkeypatch.setattr(asyncio, "sleep", fail_sleep)
+    client._poll_once = fake_poll  # type: ignore[method-assign]
+
+    await client.run_forever()
+    assert calls["n"] == 1

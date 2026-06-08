@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
@@ -30,7 +30,9 @@ _INVITE_TTL_S = 7 * 24 * 3600
 _TO_FORM = Form(default_factory=list)
 
 
-def _login_redirect() -> RedirectResponse:
+def _login_redirect(request: Request) -> RedirectResponse | Response:
+    if _is_htmx(request):
+        return Response(status_code=204, headers={"HX-Redirect": "/console/login"})
     return RedirectResponse(url="/console/login", status_code=303)
 
 
@@ -70,7 +72,7 @@ async def friends_view(request: Request):
         try:
             me = await console_printer(request, s)
         except NotAuthenticated:
-            return _login_redirect()
+            return _login_redirect(request)
         friends = await list_friends(s, me.id, online_ids=deps.online)
     return _templates.TemplateResponse(
         request, "friends.html", {"me": me.handle, "friends": friends}
@@ -84,7 +86,7 @@ async def make_invite(request: Request):
         try:
             me = await console_printer(request, s)
         except NotAuthenticated:
-            return _login_redirect()
+            return _login_redirect(request)
         code = await create_invite(s, issuer_printer_id=me.id, ttl_s=_INVITE_TTL_S)
         # One invite, two onboarding paths: a shareable /join link for a friend
         # with no printer (web-only), and the raw code for a friend with a Pi
@@ -148,6 +150,7 @@ async def join_submit(
         # mechanism as the login link) so a Pi-less friend is signed in without a
         # Pi to print a link or any hub-CLI access -- the onboarding wall.
         token = await mint_console_token(s, reg.printer_id)
+        await s.commit()
     request.session[SESSION_TOKEN_KEY] = token
     return RedirectResponse(url="/", status_code=303)
 
@@ -174,7 +177,7 @@ async def compose_view(request: Request):
         try:
             me = await console_printer(request, s)
         except NotAuthenticated:
-            return _login_redirect()
+            return _login_redirect(request)
         friends = await list_friends(s, me.id, online_ids=deps.online)
     return _templates.TemplateResponse(request, "compose.html", {
         "me": me.handle, "friends": friends, "results": None,
@@ -193,7 +196,7 @@ async def compose_send(
         try:
             me = await console_printer(request, s)
         except NotAuthenticated:
-            return _login_redirect()
+            return _login_redirect(request)
         # Call the send logic module in-process -- NOT an HTTP self-call to /send.
         resp = await send_document(
             s, deps.wake, sender_handle=me.handle, to=to,
@@ -221,7 +224,7 @@ async def history_view(request: Request):
         try:
             me = await console_printer(request, s)
         except NotAuthenticated:
-            return _login_redirect()
+            return _login_redirect(request)
         history = await list_jobs(s, owner_id=me.id, handle=me.handle)
     return _templates.TemplateResponse(request, "history.html", {
         "me": me.handle, "history": history,

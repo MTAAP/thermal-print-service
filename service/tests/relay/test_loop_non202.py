@@ -18,11 +18,14 @@ class _StubLocal:
     def __init__(self, outcome: SubmitOutcome) -> None:
         self._outcome = outcome
         self.status_polled = False
+        self.submits = 0
 
     async def print_document(self, document, *, sender, idempotency_key):
+        self.submits += 1
         return SubmitResult(self._outcome, local_job_id=None)
 
     async def print_raw(self, png_bytes, *, sender, idempotency_key):
+        self.submits += 1
         return SubmitResult(self._outcome, local_job_id=None)
 
     async def get_job_status(self, local_job_id):
@@ -69,6 +72,32 @@ async def test_503_is_retryable_no_ack_no_status(relay_paths, mock_hub, hub_http
     assert mock_hub.statuses == []
     # And nothing was persisted to the job map.
     assert JobMap(relay_paths.jobmap_path).get("hj1") is None
+
+
+async def test_repeated_queue_full_redelivery_does_not_rate_limit_itself(
+    relay_paths, mock_hub, hub_http
+):
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    cfg = RelayConfig.from_env({
+        "HUB_URL": "http://hub.test",
+        "PRINTER_RELAY_STATE_DIR": str(relay_paths.root),
+        "PRINTER_RELAY_RATE_PER_HOUR": "1",
+    })
+    local = _StubLocal(SubmitOutcome.QUEUE_FULL)
+    client = RelayClient(
+        cfg, relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=local,
+    )
+
+    for _ in range(3):
+        await client.process_job(_job("hj-queue-full"))
+
+    assert local.submits == 3
+    assert mock_hub.acked == []
+    assert mock_hub.statuses == []
+    assert JobMap(relay_paths.jobmap_path).get("hj-queue-full") is None
 
 
 async def test_409_canary_failed_no_loop(relay_paths, mock_hub, hub_http):

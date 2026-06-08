@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import logging
 from typing import Any
 
@@ -43,9 +44,8 @@ class RelayClient:
         self._hub = hub
         self._local = local
         self._allowlist = AllowList(paths.allowlist_path)
-        self._ratelimit = PerFriendRateLimiter(
-            paths.root / "rate.json", per_hour=config.per_friend_rate_per_hour
-        )
+        self._ratelimit = PerFriendRateLimiter(paths.rate_path,
+                                               per_hour=config.per_friend_rate_per_hour)
         self._jobmap = JobMap(paths.jobmap_path)
         self._last_reported_renderer_version: str | None = None
         # Strong refs to in-flight terminal-watch tasks. asyncio only holds a
@@ -137,17 +137,37 @@ class RelayClient:
     ) -> SubmitResult:
         assert self._local is not None
         namespaced = f"friend:{sender}"
-        if job["kind"] == "raw":
-            png = base64.b64decode(job["payload"]["raw_png_b64"])
-            composed = composite_from_band(png, sender=sender, sent_at=sent_at)
+        kind = job["kind"]
+        if kind == "raw":
+            png = self._decode_raw_png(job["payload"]["raw_png_b64"])
+            composed = composite_from_band(
+                png, sender=sender, sent_at=sent_at,
+                max_raw_height_px=self._cfg.max_raw_height_px,
+                max_decoded_image_pixels=self._cfg.max_decoded_image_pixels,
+            )
             return await self._local.print_raw(
                 composed, sender=namespaced, idempotency_key=hub_job_id
             )
+        if kind != "document":
+            raise ValueError("job kind must be 'document' or 'raw'")
         document = job["payload"]["document"]
         tagged = from_header_block(document, sender=sender, sent_at=sent_at)
         return await self._local.print_document(
             tagged, sender=namespaced, idempotency_key=hub_job_id
         )
+
+    def _decode_raw_png(self, raw_png_b64: Any) -> bytes:
+        if not isinstance(raw_png_b64, str):
+            raise TypeError("raw_png_b64 must be a base64 string")
+        if len(raw_png_b64) > self._cfg.max_raw_base64_chars:
+            raise ValueError("raw_png_b64 exceeds max_raw_base64_chars")
+        try:
+            png = base64.b64decode(raw_png_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"raw_png_b64 is not valid base64: {exc}") from exc
+        if len(png) > self._cfg.max_raw_payload_bytes:
+            raise ValueError("raw payload exceeds max_raw_payload_bytes")
+        return png
 
     async def _handle_submit_result(self, hub_job_id: str, result: SubmitResult) -> None:
         assert self._hub is not None
@@ -316,50 +336,70 @@ class RelayClient:
 
     # ----- the long-poll loop + reconnect (spec 4, 7) -----
 
+    def _load_creds(self) -> dict[str, Any] | None:
+        return CredsStore(self._paths.creds_path).load()
+
     async def run_forever(self) -> None:
-        creds = CredsStore(self._paths.creds_path).load()
+        creds = self._load_creds()
         if creds is None:
             raise RuntimeError("not joined to a hub; run `printer-svc hub join <code>` first")
         backoff = self._cfg.reconnect_backoff_base_s
-        async with httpx.AsyncClient(base_url=creds["hub_url"]) as hub_http, \
-                httpx.AsyncClient(base_url=self._cfg.local_service_url) as local_http:
-            self._hub = HubClient(
-                hub_http, device_token=creds["device_token"], api_token=creds["api_token"]
-            )
-            self._local = LocalClient(local_http)
-            try:
-                while True:
-                    try:
-                        # Replay + capability report + friend sync all run INSIDE
-                        # the reconnect guard so a transient hub error during
-                        # startup replay (e.g. a 409 that was a permanent
-                        # crash-loop before Fix A) backs off instead of killing
-                        # the process. _poll_once long-polls the inbox last.
-                        await self._poll_once()
-                        backoff = self._cfg.reconnect_backoff_base_s  # reset on success
-                    except httpx.HTTPError as exc:
-                        logger.warning("relay: hub unreachable (%s); backing off %.1fs",
-                                       exc, backoff)
-                        await asyncio.sleep(backoff)
-                        backoff = min(backoff * 2, self._cfg.reconnect_backoff_max_s)
-                    except Exception:
-                        # A non-httpx error (malformed response, disk fault, an
-                        # unforeseen bug) must NOT kill the loop: replay_unfinished
-                        # only runs while run_forever lives, so a crash here strands
-                        # every 'delivered' job forever. Log and back off like a
-                        # transient fault. CancelledError is a BaseException, so it
-                        # still propagates and shutdown works.
-                        logger.exception(
-                            "relay: unexpected error in poll cycle; backing off %.1fs", backoff)
-                        await asyncio.sleep(backoff)
-                        backoff = min(backoff * 2, self._cfg.reconnect_backoff_max_s)
-            finally:
-                # Cancel + drain outstanding watch tasks before the local client
-                # closes; a watch awaiting GET /jobs/{id} on a closed client
-                # would raise. Snapshot first: the done-callback mutates the set.
-                for task in list(self._watch_tasks):
-                    task.cancel()
-                await self.join_watchers()
+        while True:
+            async with httpx.AsyncClient(base_url=creds["hub_url"]) as hub_http, \
+                    httpx.AsyncClient(base_url=self._cfg.local_service_url) as local_http:
+                self._hub = HubClient(
+                    hub_http, device_token=creds["device_token"], api_token=creds["api_token"]
+                )
+                self._local = LocalClient(local_http)
+                reconnect = False
+                try:
+                    while True:
+                        current_creds = self._load_creds()
+                        if current_creds is None:
+                            logger.info("relay: hub credentials removed; stopping relay")
+                            return
+                        if current_creds != creds:
+                            logger.info("relay: hub credentials changed; reconnecting")
+                            creds = current_creds
+                            reconnect = True
+                            break
+                        try:
+                            # Replay + capability report + friend sync all run INSIDE
+                            # the reconnect guard so a transient hub error during
+                            # startup replay (e.g. a 409 that was a permanent
+                            # crash-loop before Fix A) backs off instead of killing
+                            # the process. _poll_once long-polls the inbox last.
+                            await self._poll_once()
+                            backoff = self._cfg.reconnect_backoff_base_s  # reset on success
+                        except httpx.HTTPError as exc:
+                            logger.warning("relay: hub unreachable (%s); backing off %.1fs",
+                                           exc, backoff)
+                            await asyncio.sleep(backoff)
+                            backoff = min(backoff * 2, self._cfg.reconnect_backoff_max_s)
+                        except Exception:
+                            # A non-httpx error (malformed response, disk fault, an
+                            # unforeseen bug) must NOT kill the loop: replay_unfinished
+                            # only runs while run_forever lives, so a crash here strands
+                            # every 'delivered' job forever. Log and back off like a
+                            # transient fault. CancelledError is a BaseException, so it
+                            # still propagates and shutdown works.
+                            logger.exception(
+                                "relay: unexpected error in poll cycle; backing off %.1fs",
+                                backoff,
+                            )
+                            await asyncio.sleep(backoff)
+                            backoff = min(backoff * 2, self._cfg.reconnect_backoff_max_s)
+                finally:
+                    # Cancel + drain outstanding watch tasks before the local client
+                    # closes; a watch awaiting GET /jobs/{id} on a closed client
+                    # would raise. Snapshot first: the done-callback mutates the set.
+                    for task in list(self._watch_tasks):
+                        task.cancel()
+                    await self.join_watchers()
+            if reconnect:
+                backoff = self._cfg.reconnect_backoff_base_s
+                continue
+            return
 
     async def _poll_once(self) -> None:
         assert self._hub is not None

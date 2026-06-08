@@ -13,6 +13,7 @@ from printer_core.constants import PRINT_HEAD_WIDTH_PX
 _BAND_HEIGHT_PX = 44
 _BAND_PAD_X = 24  # matches the live-area gutter so the label aligns with body text
 _MAX_RAW_HEIGHT_DEFAULT = 16_000  # ServiceConfig.max_raw_height_px default
+_MAX_DECODED_IMAGE_PIXELS_DEFAULT = 10_000_000  # ServiceConfig default
 
 
 def from_label(sender: str, sent_at: str) -> str:
@@ -61,6 +62,7 @@ def _render_band(label: str) -> Image.Image:
 def composite_from_band(
     png_bytes: bytes, *, sender: str, sent_at: str,
     max_raw_height_px: int = _MAX_RAW_HEIGHT_DEFAULT,
+    max_decoded_image_pixels: int = _MAX_DECODED_IMAGE_PIXELS_DEFAULT,
 ) -> bytes:
     """Composite a 576px FROM band ABOVE the incoming PNG (spec 7.4).
 
@@ -74,14 +76,22 @@ def composite_from_band(
     # DecompressionBombError (neither a ValueError nor an OSError); a truncated
     # PNG raises OSError on access. Normalize them all here.
     try:
-        src = Image.open(io.BytesIO(png_bytes)).convert("L")
+        with Image.open(io.BytesIO(png_bytes)) as opened:
+            width, height = opened.size
+            if width != PRINT_HEAD_WIDTH_PX:
+                raise ValueError(f"raw image must be exactly {PRINT_HEAD_WIDTH_PX}px wide")
+            pixels = width * height
+            if pixels > max_decoded_image_pixels:
+                raise ValueError(
+                    f"raw image has {pixels} pixels; max_decoded_image_pixels="
+                    f"{max_decoded_image_pixels}"
+                )
+            total_h = _BAND_HEIGHT_PX + height
+            if total_h > max_raw_height_px:
+                raise ValueError(f"band+image height {total_h} exceeds max_raw_height_px")
+            src = opened.convert("L")
     except (OSError, Image.DecompressionBombError) as exc:
         raise ValueError(f"raw payload is not a decodable image: {exc}") from exc
-    if src.width != PRINT_HEAD_WIDTH_PX:
-        raise ValueError(f"raw image must be exactly {PRINT_HEAD_WIDTH_PX}px wide")
-    total_h = _BAND_HEIGHT_PX + src.height
-    if total_h > max_raw_height_px:
-        raise ValueError(f"band+image height {total_h} exceeds max_raw_height_px")
     band = _render_band(from_label(sender, sent_at))
     canvas = Image.new("L", (PRINT_HEAD_WIDTH_PX, total_h), color=255)
     canvas.paste(band, (0, 0))

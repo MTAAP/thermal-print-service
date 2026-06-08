@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import secrets
 from typing import Any
 
@@ -89,7 +90,15 @@ def hub_friends_accept(paths: RelayPaths, handle: str) -> None:
 
 
 def hub_leave(paths: RelayPaths) -> None:
-    CredsStore(paths.creds_path).clear()
+    for path in (
+        paths.creds_path,
+        paths.allowlist_path,
+        paths.invites_path,
+        paths.jobmap_path,
+        paths.rate_path,
+    ):
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
 
 
 def hub_status(paths: RelayPaths) -> dict[str, Any]:

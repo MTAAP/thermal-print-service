@@ -6,7 +6,8 @@ from printer.relay.commands import (
     hub_login_link,
     hub_status,
 )
-from printer.relay.store import AllowList, CredsStore, InviteStore
+from printer.relay.ratelimit import PerFriendRateLimiter
+from printer.relay.store import AllowList, CredsStore, InviteStore, JobMap
 
 
 async def test_hub_join_stores_creds_and_pins_inviter(relay_paths, hub_http):
@@ -74,13 +75,27 @@ def test_hub_friends_accept_adds_held_friend(relay_paths):
     assert AllowList(relay_paths.allowlist_path).contains("carol") is True
 
 
-def test_hub_leave_clears_creds(relay_paths):
+def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
     CredsStore(relay_paths.creds_path).save({
         "printer_id": "p", "handle": "tim", "hub_url": "http://hub.test",
         "device_token": "d", "api_token": "a",
     })
+    AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
+                                              renderer_version=None)
+    InviteStore(relay_paths.invites_path).record("inv_1")
+    JobMap(relay_paths.jobmap_path).put("hj1", local_job_id="loc1", last_status="delivered")
+    rate_path = relay_paths.root / "rate.json"
+    assert PerFriendRateLimiter(rate_path, per_hour=1).check_and_record(
+        "alice", "2026-06-03T14:00:00+00:00"
+    )
+
     hub_leave(relay_paths)
+
     assert CredsStore(relay_paths.creds_path).load() is None
+    assert AllowList(relay_paths.allowlist_path).contains("alice") is False
+    assert InviteStore(relay_paths.invites_path).has("inv_1") is False
+    assert JobMap(relay_paths.jobmap_path).get("hj1") is None
+    assert not rate_path.exists()
 
 
 def test_hub_status_reports_joined_state(relay_paths):

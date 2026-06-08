@@ -134,6 +134,33 @@ def test_external_import_in_sidecar_stylesheet_flagged(tmp_path):
 
 
 @pytest.mark.slow
+def test_symlink_escape_under_source_dir_is_blocked(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.png"
+    secret.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    src_dir = tmp_path / "design"
+    src_dir.mkdir()
+    link = src_dir / "innocent.png"
+    link.symlink_to(secret)
+    src = src_dir / "design.html"
+    src.write_text(
+        "<!doctype html><html><body>"
+        '<img src="./innocent.png">'
+        "</body></html>"
+    )
+
+    findings = pre_render_lint(src.read_text(), source_path=src)
+    assert any(
+        f.rule == "external_resource"
+        and "innocent.png" in f.message
+        and f.severity.value == "error"
+        for f in findings
+    ), f"symlink escape was not blocked. findings={findings!r}"
+
+
+@pytest.mark.slow
 def test_inverse_text_small_size_warns():
     """Regression: a 22 px white-on-black blockquote (the FOLIO landing
     page bug we hit on paper) must produce an ``inverse_text_too_small``

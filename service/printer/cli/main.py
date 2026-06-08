@@ -225,7 +225,7 @@ def cmd_hub(args: argparse.Namespace) -> int:
 
     if args.hub_cmd == "leave":
         commands.hub_leave(paths)
-        print("left hub; creds cleared")
+        print("left hub; relay trust state cleared")
         return 0
 
     if args.hub_cmd == "friends":  # `hub friends accept <handle>`

@@ -5,6 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from printer.app import create_app
+from printer.queue.joblog import JobRecord
 
 
 def _png_bytes():
@@ -44,6 +45,30 @@ async def test_get_job_by_id_returns_single_entry(fake_deps):
     # Same shape as the /jobs list entry — no envelope.
     assert "reprint_url" in body
     assert body["reprint_url"] == f"/jobs/{job_id}/reprint"
+
+
+@pytest.mark.asyncio
+async def test_jobs_and_detail_report_latest_non_accepted_event(fake_deps):
+    app = create_app(fake_deps)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print/raw", content=_png_bytes(),
+                          headers={"Content-Type": "image/png", "X-Sender": "test"})
+        job_id = r.json()["id"]
+        fake_deps.joblog.append(JobRecord.retry(
+            job_id=job_id,
+            detail="printer unavailable",
+        ))
+
+        listing = await ac.get("/jobs")
+        detail = await ac.get(f"/jobs/{job_id}")
+
+    listed = next(j for j in listing.json()["jobs"] if j["id"] == job_id)
+    assert listed["status"] == "retry"
+    assert listed["printed_at"] is None
+    assert listed["paper_used_mm"] is None
+
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "retry"
 
 
 @pytest.mark.asyncio
