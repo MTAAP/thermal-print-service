@@ -49,6 +49,10 @@ async def test_get_job_by_id_returns_single_entry(fake_deps):
 
 @pytest.mark.asyncio
 async def test_jobs_and_detail_report_latest_non_accepted_event(fake_deps):
+    # A job that the worker has attempted and is backing off to retry has an
+    # `accepted` + `retry` record but no terminal record. Status must reflect
+    # the latest event ("retry"), not fall back to "queued" — on both the
+    # /jobs listing and the /jobs/{id} detail.
     app = create_app(fake_deps)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
         r = await ac.post("/print/raw", content=_png_bytes(),

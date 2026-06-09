@@ -13,6 +13,27 @@ def test_external_resource_flagged_as_error():
 
 
 @pytest.mark.slow
+def test_lint_blocks_symlink_escaping_source_dir(tmp_path):
+    # The lint pass must apply the same real-path check as the renderer: a
+    # relative-looking ref to a symlink that resolves outside the source dir is
+    # blocked, and the blocked fetch is surfaced as an error (so `lint`/`print`
+    # fail rather than letting the lint pass quietly read an outside file).
+    src_dir = (tmp_path / "design").resolve()
+    src_dir.mkdir()
+    secret = tmp_path / "secret.css"
+    secret.write_text("body{}")
+    (src_dir / "evil.css").symlink_to(secret)
+    src = src_dir / "page.html"
+    src.write_text(
+        '<head><link rel="stylesheet" href="./evil.css"></head><body>x</body>'
+    )
+    findings = pre_render_lint(src.read_text(), source_path=src)
+    assert any(
+        f.severity.value == "error" and "evil.css" in f.message for f in findings
+    )
+
+
+@pytest.mark.slow
 def test_small_font_size_warns():
     html = "<body><p style='font-size:11px'>tiny</p></body>"
     findings = pre_render_lint(html)

@@ -274,6 +274,11 @@ def pre_render_lint(
                 render_dir_uri = render_dir.as_uri() + "/"
 
                 def _route(route):
+                    # Same allowlist decision as render_html_to_png (single
+                    # source of truth): a symlink under the source dir that
+                    # resolves outside it must be blocked in the lint pass too,
+                    # or `tprint-design lint` would fetch the outside file even
+                    # though the renderer blocks it.
                     url = route.request.url
                     if _is_allowed_subresource(
                         url,

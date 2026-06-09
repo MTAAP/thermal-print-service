@@ -391,6 +391,10 @@ def create_app(deps: AppDeps) -> FastAPI:
             if r.event == "accepted":
                 accepted[r.job_id] = r.__dict__
             else:
+                # replay() is chronological, so the last non-accepted record is
+                # the job's current state. Tracking the latest event (not just
+                # terminal ones) means an in-progress retry surfaces as "retry"
+                # instead of falling back to "queued".
                 latest[r.job_id] = r.__dict__
         return accepted, latest
 
