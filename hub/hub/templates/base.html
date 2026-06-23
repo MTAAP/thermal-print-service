@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Printer Pals</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-brand">
+      <span class="app-brand-name">Printer Pals</span>
+      <span>console</span>
+      {# Authed pages pass `me` (the handle); public pages (login, join) don't. #}
+      {% if me %}<span class="app-brand-user" data-testid="current-handle">{{ me }}</span>{% endif %}
+    </header>
+    {# Nav is for signed-in consoles only. The public pages (login landing, the
+       /join onboarding form) share this shell but have no session, and showing
+       Friends/Compose/History there would dead-end a not-yet-joined visitor. #}
+    {% if request.session.get("console_token") %}
+    <nav class="app-nav" data-testid="nav">
+      <a href="/">Friends</a>
+      <a href="/compose">Compose</a>
+      <a href="/history">History</a>
+      <span class="app-nav-spacer"></span>
+      <form method="post" action="/console/logout" style="display:inline">
+        <button type="submit" class="btn-ghost" data-testid="logout">Log out</button>
+      </form>
+    </nav>
+    {% endif %}
+    <main class="app-main">{% block content %}{% endblock %}</main>
+  </div>
+</body>
+</html>

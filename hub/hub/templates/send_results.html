@@ -1,0 +1,18 @@
+<ul class="list send-results" data-testid="send-results">
+  {% for r in results %}
+  <li class="list-row" data-result-to="{{ r.to }}" data-result-status="{{ r.status }}">
+    <span class="to">{{ r.to }}</span>
+    {% if r.status == "queued" %}
+      <span>queued for delivery</span>
+    {% elif r.status == "not_friend" %}
+      <span>not a mutual friend</span>
+    {% elif r.status == "recipient_unknown" %}
+      <span>no such handle</span>
+    {% elif r.status == "incompatible" %}
+      <span>incompatible with their printer: {{ r.detail }}</span>
+    {% elif r.status == "sender_throttled" %}
+      <span>you are sending too fast, try again shortly</span>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>

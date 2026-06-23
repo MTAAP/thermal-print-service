@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="view view-compose" data-testid="compose-view">
+  <h1 class="view-title">Compose &amp; send</h1>
+  <form class="compose-form" method="post" action="/compose" hx-post="/compose"
+        hx-target="#results-slot" hx-swap="innerHTML">
+    <fieldset class="recipient-picker" data-testid="recipient-picker">
+      <legend>To</legend>
+      {% for f in friends %}
+      <label class="recipient-option">
+        <input type="checkbox" name="to" value="{{ f.handle }}">
+        {{ f.display_name }}
+      </label>
+      {% else %}
+      <p class="list-empty" data-testid="no-recipients">No friends to send to yet.</p>
+      {% endfor %}
+    </fieldset>
+    <label class="field"><span class="field-label">Title (optional)</span>
+      <input type="text" name="title" data-testid="title-input">
+    </label>
+    <label class="field"><span class="field-label">Message</span>
+      <textarea name="message" required data-testid="message-input"></textarea>
+    </label>
+    <button type="submit" data-testid="send-button">Send</button>
+  </form>
+  <div id="results-slot" class="results-slot">
+    {% if results is not none %}
+      {% include "send_results.html" %}
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

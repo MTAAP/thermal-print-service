@@ -1,0 +1,366 @@
+/* Printer Pals console stylesheet.
+ *
+ * Aesthetic: thermal-receipt-friendly, monospace-leaning, high-contrast,
+ * paper-like. The product's metaphor is paper rolling out of a printer, so the
+ * shell reads as a strip of receipt paper: warm off-white ground, ink-black
+ * text, a perforated top edge, and JetBrains Mono for the data that a thermal
+ * head would actually print. Body copy uses IBM Plex Sans (the bundled UI face)
+ * so prose stays legible at small sizes while monospace carries the "printed"
+ * artifacts (codes, handles, statuses, timestamps).
+ *
+ * Single deployable: every token lives here, no CDN, no build step. Hallmark
+ * owns the look; classes here are additive over the templates' semantic hooks. */
+
+:root {
+  color-scheme: light dark;
+
+  /* Paper + ink. Kept high-contrast so small monospace stays readable. */
+  --paper: #f5f1e8;
+  --paper-edge: #e7e0d0;
+  --ink: #1b1b18;
+  --ink-soft: #5b574c;
+  --line: #cfc7b4;
+  --accent: #b23a1e;        /* receipt-stamp red, used sparingly for warnings */
+  --accent-soft: #f3dcd4;
+  --ok: #2f6b3a;
+  --shadow: rgba(27, 27, 24, 0.12);
+
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --space: 0.75rem;
+  --radius: 6px;
+  --shell-width: 30rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1c1b17;
+    --paper-edge: #262420;
+    --ink: #ece6d6;
+    --ink-soft: #a39c8a;
+    --line: #3a372f;
+    --accent: #e8714f;
+    --accent-soft: #3a261f;
+    --ok: #7fc08c;
+    --shadow: rgba(0, 0, 0, 0.45);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: calc(var(--space) * 2) var(--space);
+  background: var(--paper-edge);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The receipt strip. A subtle perforation along the top sells the paper feel. */
+.app-shell {
+  max-width: var(--shell-width);
+  margin: 0 auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px var(--shadow);
+  overflow: hidden;
+}
+
+.app-shell::before {
+  content: "";
+  display: block;
+  height: 8px;
+  background: radial-gradient(circle at 6px 0, transparent 4px, var(--paper) 4px) repeat-x;
+  background-size: 12px 8px;
+  background-color: var(--paper-edge);
+}
+
+.app-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: var(--space) calc(var(--space) * 1.25) 0;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+}
+
+.app-brand-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Navigation reads as tabbed receipt headers. */
+.app-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem calc(var(--space) * 1.25);
+  border-bottom: 1px dashed var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.app-nav a {
+  color: var(--ink);
+  text-decoration: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.app-nav a:hover {
+  background: var(--paper-edge);
+}
+
+.app-nav-spacer {
+  flex: 1;
+}
+
+.app-main {
+  padding: var(--space) calc(var(--space) * 1.25) calc(var(--space) * 1.5);
+}
+
+.view-title {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  margin: 0.25rem 0 var(--space);
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 0.3rem;
+}
+
+.section-title {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin: var(--space) 0 0.4rem;
+}
+
+/* Forms */
+.field {
+  display: block;
+  margin: 0.6rem 0;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.2rem;
+}
+
+input[type="text"],
+textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.45rem 0.55rem;
+}
+
+textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  border-radius: 4px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--ink-soft);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+}
+
+.btn-ghost:hover {
+  background: var(--paper-edge);
+  color: var(--ink);
+}
+
+/* Recipient picker reads as a checklist on the receipt. */
+.recipient-picker {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  margin: 0.6rem 0;
+}
+
+.recipient-picker legend {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  padding: 0 0.3rem;
+}
+
+.recipient-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+/* Lists: friends, send results, history. Dotted separators echo tear lines. */
+.list {
+  list-style: none;
+  margin: 0.4rem 0;
+  padding: 0;
+}
+
+.list-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted var(--line);
+}
+
+.list-row:last-child {
+  border-bottom: none;
+}
+
+.list-empty {
+  padding: 0.6rem 0;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.peer,
+.to {
+  font-family: var(--font-mono);
+}
+
+.when {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+/* Status pills */
+.status {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+[data-status="online"] .status,
+[data-online="true"] .status,
+.status-online {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+[data-status="printer_unknown_partial"] .status {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* printer_lost is indeterminate, not an error: the local record vanished before
+ * the outcome was confirmed. Muted + dashed to read as "unknown", deliberately
+ * calmer than the accent-red of an unsafe partial. */
+[data-status="printer_lost"] .status {
+  color: var(--ink-soft);
+  border-style: dashed;
+}
+
+/* Invite code: the thing a user copies onto another's printer. */
+.invite-slot {
+  margin: 0.6rem 0;
+}
+
+.invite-code code {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  background: var(--paper-edge);
+  border: 1px dashed var(--ink);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+}
+
+/* The unsafe-reprint warning is the loudest thing on the History view: a stamped
+ * red notice with no action affordance (we never offer to print again). */
+.partial-warning {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+/* The indeterminate-outcome notice for printer_lost: an advisory, not an alarm.
+ * Muted dashed border instead of the partial-warning's solid stamp-red. */
+.lost-warning {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+code {
+  font-family: var(--font-mono);
+}
+
+/* Login landing: a minimal stub of a receipt before sign-in. */
+.login-note {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.login-invalid {
+  color: var(--accent);
+}

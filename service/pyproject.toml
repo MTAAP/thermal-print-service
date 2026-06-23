@@ -12,6 +12,7 @@ dependencies = [
   "qrcode[pil]>=8.0",
   "python-barcode>=0.15",
   "fonttools>=4.50",
+  "httpx>=0.27",
   "printer-core",  # editable sibling: pip install -e ../printer-core (not on PyPI)
 ]
 
@@ -19,7 +20,6 @@ dependencies = [
 dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
-  "httpx>=0.27",
   "asgi-lifespan>=2.1",
   "ruff>=0.7",
   "mypy>=1.13",

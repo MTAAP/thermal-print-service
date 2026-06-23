@@ -32,4 +32,7 @@ PI
 echo "==> restart service (if installed)"
 ssh "${REMOTE}" 'sudo systemctl is-enabled printer.service >/dev/null 2>&1 && sudo systemctl restart printer.service || echo "(printer.service not installed yet — skipping restart)"'
 
+echo "==> restart relay (if enabled)"
+ssh "${REMOTE}" 'sudo systemctl is-enabled printer-relay.service >/dev/null 2>&1 && sudo systemctl restart printer-relay.service || echo "(printer-relay.service not enabled — skipping restart)"'
+
 echo "==> done."

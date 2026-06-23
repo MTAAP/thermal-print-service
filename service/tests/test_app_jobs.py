@@ -48,21 +48,31 @@ async def test_get_job_by_id_returns_single_entry(fake_deps):
 
 
 @pytest.mark.asyncio
-async def test_get_job_reports_in_progress_retry_not_queued(fake_deps):
+async def test_jobs_and_detail_report_latest_non_accepted_event(fake_deps):
     # A job that the worker has attempted and is backing off to retry has an
     # `accepted` + `retry` record but no terminal record. Status must reflect
-    # the latest event ("retry"), not fall back to "queued".
+    # the latest event ("retry"), not fall back to "queued" — on both the
+    # /jobs listing and the /jobs/{id} detail.
     app = create_app(fake_deps)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
         r = await ac.post("/print/raw", content=_png_bytes(),
                           headers={"Content-Type": "image/png", "X-Sender": "test"})
         job_id = r.json()["id"]
-        fake_deps.joblog.append(JobRecord.retry(job_id=job_id, detail="printer offline"))
+        fake_deps.joblog.append(JobRecord.retry(
+            job_id=job_id,
+            detail="printer unavailable",
+        ))
+
+        listing = await ac.get("/jobs")
         detail = await ac.get(f"/jobs/{job_id}")
+
+    listed = next(j for j in listing.json()["jobs"] if j["id"] == job_id)
+    assert listed["status"] == "retry"
+    assert listed["printed_at"] is None
+    assert listed["paper_used_mm"] is None
+
     assert detail.status_code == 200
-    body = detail.json()
-    assert body["status"] == "retry"
-    assert body["printed_at"] is None
+    assert detail.json()["status"] == "retry"
 
 
 @pytest.mark.asyncio

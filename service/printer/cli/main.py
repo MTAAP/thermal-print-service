@@ -151,6 +151,108 @@ def cmd_test_print(args: argparse.Namespace) -> int:
         return 1
 
 
+def _relay_paths():
+    from printer.relay.config import RelayConfig
+    from printer.relay.paths import RelayPaths
+    cfg = RelayConfig.from_env()
+    paths = RelayPaths(cfg.relay_state_dir)
+    paths.ensure()
+    return cfg, paths
+
+
+def cmd_hub(args: argparse.Namespace) -> int:
+    import asyncio
+
+    import httpx
+
+    from printer.relay import commands
+    from printer.relay.store import CredsStore
+
+    cfg, paths = _relay_paths()
+
+    if args.hub_cmd == "join":
+        async def _run() -> dict:
+            async with httpx.AsyncClient(base_url=cfg.hub_url) as c:
+                return await commands.hub_join(
+                    paths, c, hub_url=cfg.hub_url, code=args.code,
+                    handle=args.handle, display_name=args.display_name,
+                )
+        reg = asyncio.run(_run())
+        print(f"joined as {reg['handle']}; inviter={reg.get('inviter_handle')}")
+        return 0
+
+    if args.hub_cmd == "invite":  # `hub invite new`
+        creds = CredsStore(paths.creds_path).load()
+        if creds is None:
+            print("not joined; run `printer-svc hub join <code>` first", file=sys.stderr)
+            return 1
+
+        # Distinct name from the join branch's _run: mypy treats two same-named
+        # nested defs in one function as conditional redefinitions and rejects
+        # the differing return signatures.
+        async def _run_invite() -> tuple[str, str]:
+            async with httpx.AsyncClient(base_url=creds["hub_url"]) as c:
+                return await commands.hub_invite_new(paths, c)
+        code, invite_id = asyncio.run(_run_invite())
+        # Show the user the code to share out-of-band; the invite_id is recorded
+        # locally (inside hub_invite_new) and is not something the user handles.
+        print(f"invite code: {code}")
+        return 0
+
+    if args.hub_cmd == "login-link":
+        # Distinct name from the invite branch's `creds`: a second assignment to
+        # the same local would defeat mypy's None-narrowing inside BOTH nested
+        # closures (the variable would no longer be effectively-final). Same
+        # reason the join/invite branches use distinct nested-function names.
+        ll_creds = CredsStore(paths.creds_path).load()
+        if ll_creds is None:
+            print("not joined; run `printer-svc hub join <code>` first", file=sys.stderr)
+            return 1
+
+        # Two clients: the hub mints the link, the local service prints it.
+        async def _run_login_link() -> tuple[str, int]:
+            async with httpx.AsyncClient(base_url=ll_creds["hub_url"]) as hub_http, \
+                    httpx.AsyncClient(base_url=cfg.local_service_url) as local_http:
+                return await commands.hub_login_link(paths, hub_http, local_http)
+        url, expires_in_s = asyncio.run(_run_login_link())
+        print(f"login link printed; open within {expires_in_s // 60} min:\n{url}")
+        return 0
+
+    if args.hub_cmd == "status":
+        import json as _json
+        print(_json.dumps(commands.hub_status(paths), indent=2))
+        return 0
+
+    if args.hub_cmd == "leave":
+        commands.hub_leave(paths)
+        print("left hub; relay trust state cleared")
+        return 0
+
+    if args.hub_cmd == "friends":  # `hub friends accept <handle>`
+        commands.hub_friends_accept(paths, args.handle)
+        print(f"allow-listed {args.handle}")
+        return 0
+
+    print("usage: printer-svc hub {join|invite new|login-link|status|leave|friends accept}",
+          file=sys.stderr)
+    return 2
+
+
+def cmd_relay_run(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from printer.relay.config import RelayConfig
+    from printer.relay.loop import RelayClient
+    from printer.relay.paths import RelayPaths
+
+    cfg = RelayConfig.from_env()
+    paths = RelayPaths(cfg.relay_state_dir)
+    paths.ensure()
+    client = RelayClient(cfg, paths)
+    asyncio.run(client.run_forever())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="printer-svc")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -170,6 +272,35 @@ def main(argv: list[str] | None = None) -> int:
                    help="service base URL (default: PRINTER_SERVICE_URL or host/port env)")
     t.add_argument("--timeout", type=float, default=30.0)
     t.set_defaults(func=cmd_test_print)
+
+    h = sub.add_parser("hub", help="manage the friend-network hub connection")
+    hsub = h.add_subparsers(dest="hub_cmd", required=True)
+
+    hj = hsub.add_parser("join", help="redeem an invite code and register this Pi")
+    hj.add_argument("code")
+    hj.add_argument("--handle", required=True)
+    hj.add_argument("--display-name", dest="display_name", required=True)
+
+    hi = hsub.add_parser("invite", help="invite subcommands")
+    hisub = hi.add_subparsers(dest="invite_cmd", required=True)
+    hisub.add_parser("new", help="create a hub invite code (recorded locally)")
+
+    hsub.add_parser("login-link",
+                    help="mint a console login link and print it (QR + URL) on paper")
+    hsub.add_parser("status", help="show hub connection + allow-list")
+    hsub.add_parser("leave", help="clear stored hub credentials")
+
+    hf = hsub.add_parser("friends", help="friend subcommands")
+    hfsub = hf.add_subparsers(dest="friends_cmd", required=True)
+    hfa = hfsub.add_parser("accept", help="add a held friend to the local allow-list")
+    hfa.add_argument("handle")
+
+    h.set_defaults(func=cmd_hub)
+
+    rl = sub.add_parser("relay", help="relay subcommands")
+    rlsub = rl.add_subparsers(dest="relay_cmd", required=True)
+    rlsub.add_parser("run", help="run the outbound long-poll relay loop")
+    rl.set_defaults(func=cmd_relay_run)
 
     ns = p.parse_args(argv)
     return ns.func(ns)

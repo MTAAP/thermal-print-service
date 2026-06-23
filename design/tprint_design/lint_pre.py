@@ -279,8 +279,9 @@ def pre_render_lint(
                     # resolves outside it must be blocked in the lint pass too,
                     # or `tprint-design lint` would fetch the outside file even
                     # though the renderer blocks it.
+                    url = route.request.url
                     if _is_allowed_subresource(
-                        route.request.url,
+                        url,
                         render_dir_uri=render_dir_uri,
                         fonts_uri=fonts_uri,
                         source_dir_uri=source_dir_uri,
@@ -288,7 +289,7 @@ def pre_render_lint(
                     ):
                         route.continue_()
                         return
-                    blocked_urls.append(route.request.url)
+                    blocked_urls.append(url)
                     route.abort()
 
                 page.route("**/*", _route)

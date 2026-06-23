@@ -1,0 +1,38 @@
+[Unit]
+Description=Thermal Print Friend-Network Relay
+# Connects OUTBOUND to the public hub (no inbound exposure) and submits inbound
+# friend jobs to the local print service over loopback. Needs the network up;
+# the local service is a soft dependency (the loop just backs off if it's down).
+After=network-online.target tailscaled.service systemd-timesyncd.service printer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thermalprinter
+Group=thermalprinter
+WorkingDirectory=/home/thermalprinter/thermal-print-service
+StateDirectory=printer
+StateDirectoryMode=0750
+# hub_url + device/api tokens are read from creds written by `printer-svc hub
+# join` (under PRINTER_RELAY_STATE_DIR) -- NOT from the environment, so no hub
+# host is baked into this unit. The relay reaches the printer only via the local
+# HTTP API, hence no DeviceAllow.
+Environment=PRINTER_RELAY_STATE_DIR=/var/lib/printer/relay
+Environment=PRINTER_HOST=127.0.0.1
+Environment=PRINTER_PORT=8000
+ExecStart=/home/thermalprinter/thermal-print-service/.venv/bin/printer-svc relay run
+Restart=on-failure
+RestartSec=5
+
+# Sandbox (mirrors printer.service; no DeviceAllow -- the relay never opens lp0).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/printer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

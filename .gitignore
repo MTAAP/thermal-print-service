@@ -10,6 +10,9 @@ printer-core/*.egg-info/
 printer-core/build/
 design/*.egg-info/
 design/build/
+hub/.venv/
+hub/*.egg-info/
+hub/build/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
