@@ -84,6 +84,12 @@ REMOTE=printer.your-tailnet.ts.net ./deploy/sync.sh # override SSH alias
 
 `sync.sh` defaults to the `pi-printer-lan` SSH alias. The Pi runs the service as the `thermalprinter` user under `systemd` (unit at `deploy/printer.service`); state lives in `/var/lib/printer/{jobs,cache,idempotency}`.
 
+### Deploying the hub (Railway)
+
+**The hub does NOT auto-deploy on push.** Because this repo is public, the Railway GitHub auto-deploy is intentionally OFF — merging to `main` does **not** redeploy the hub. The hub must be deployed **manually** (Railway CLI `railway up` from `hub/`, or a redeploy from the Railway dashboard). Config is `hub/railway.json` (Dockerfile builder, healthcheck `/healthz`) + `hub/Dockerfile` (runtime install via `pip install -c constraints.txt .`).
+
+Consequence for coordinated hub+relay changes: a `git push` / merge updates the code but not the running hub, so after merging hub-facing changes, trigger the manual deploy and confirm the new code is live (e.g. probe a new-behavior endpoint) **before** syncing dependent relay changes to the Pi — otherwise a new relay can talk to an old hub.
+
 ## Architecture invariants
 
 These are spec-load-bearing — touching them requires a spec update:
