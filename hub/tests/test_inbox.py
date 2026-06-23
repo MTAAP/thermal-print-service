@@ -62,6 +62,44 @@ async def test_inbox_empty_poll_times_out(app_client):
     assert r.status_code == 200 and r.json()["job"] is None
 
 
+async def test_inbox_rejects_non_finite_wait(app_client):
+    # ?wait=inf (or nan) must 400, never pin a connection + asyncio task forever.
+    client, deps = app_client
+    from hub.invites import create_invite, redeem_invite
+    async with deps.sessionmaker() as s:
+        bob = await redeem_invite(
+            s, code=await create_invite(s, issuer_printer_id=None, ttl_s=3600),
+            handle="bob", display_name="Bob")
+    auth = {"Authorization": f"Bearer {bob.device_token}"}
+    for bad in ("inf", "Infinity", "nan"):
+        r = await client.get(f"/inbox?wait={bad}", headers=auth)
+        assert r.status_code == 400, bad
+
+
+async def test_inbox_clamps_oversized_wait_to_window(app_client):
+    # A finite wait beyond the server window is clamped, not honored: the poll
+    # returns promptly (within the configured long_poll window) rather than
+    # holding for the client-requested 10^9 seconds.
+    import asyncio
+
+    client, deps = app_client
+    deps.config = deps.config.__class__.from_env(
+        {"HUB_SESSION_HTTPS_ONLY": "false", "HUB_LONG_POLL_WAIT_S": "0.3"}
+    )
+    from hub.invites import create_invite, redeem_invite
+    async with deps.sessionmaker() as s:
+        bob = await redeem_invite(
+            s, code=await create_invite(s, issuer_printer_id=None, ttl_s=3600),
+            handle="bob", display_name="Bob")
+    auth = {"Authorization": f"Bearer {bob.device_token}"}
+    # No job queued: the empty poll must return after ~the clamped window, well
+    # under the 10^9s the client asked for.
+    r = await asyncio.wait_for(
+        client.get("/inbox?wait=1000000000", headers=auth), timeout=5.0
+    )
+    assert r.status_code == 200 and r.json()["job"] is None
+
+
 async def test_ack_and_status_reject_non_owner_device(app_client):
     """A device may only ack / report status on jobs addressed to it. A stranger
     device with a valid token must get 404 (not 403, to avoid leaking job

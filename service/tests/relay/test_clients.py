@@ -65,6 +65,17 @@ async def test_hub_client_create_login_link_uses_device_token(mock_hub, hub_http
     assert mock_hub.auth_seen[-1] == "Bearer dev-token"
 
 
+async def test_hub_client_get_friends_uses_api_token(mock_hub, hub_http):
+    hub = HubClient(hub_http, device_token="dev-token", api_token="api-token")
+    # GET /friends is a member action (the friend list is account state, not
+    # device-receive state), so it rides the API token per the device/api scope
+    # split -- mirroring the invite/login-link scope assertions.
+    mock_hub.friends = [{"handle": "bob", "display_name": "Bob"}]
+    friends = await hub.get_friends()
+    assert friends == [{"handle": "bob", "display_name": "Bob"}]
+    assert mock_hub.auth_seen[-1] == "Bearer api-token"
+
+
 async def test_local_client_maps_status_codes(fake_deps):
     # Reuse the real local service via the existing lifespan_client fixture.
     from tests.conftest import lifespan_client

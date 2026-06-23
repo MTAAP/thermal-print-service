@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("printer.relay")
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -32,9 +35,19 @@ class CredsStore:
         self._path = path
 
     def load(self) -> dict[str, Any] | None:
-        if not self._path.exists():
+        # Read-then-parse with no exists() pre-check: an exists()-then-read_text()
+        # races a concurrent `printer-svc hub leave/join` CLI unlinking the file
+        # between the two calls. A missing file (OSError) or a torn write
+        # (JSONDecodeError, from a power cut mid-save) returns None -- treated as
+        # "not joined" rather than crashing run_forever. Without this, the read
+        # fault propagates out, asyncio.run exits non-zero, and systemd crash-loops
+        # the unit until StartLimitBurst trips and STOPS it -- the relay goes
+        # permanently dark with no replay. (JobMap has the same tolerance.)
+        try:
+            return json.loads(self._path.read_text())  # type: ignore[no-any-return]
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("relay: creds.json unreadable (%s); treating as not joined", exc)
             return None
-        return json.loads(self._path.read_text())
 
     def save(self, creds: dict[str, Any]) -> None:
         _atomic_write(self._path, json.dumps(creds, sort_keys=True).encode())
@@ -53,7 +66,17 @@ class AllowList:
         self._path = path
         self._data: dict[str, dict[str, Any]] = {}
         if path.exists():
-            self._data = json.loads(path.read_text())
+            # Tolerate a torn allowlist.json (power cut mid-write on a Pi Zero):
+            # an unguarded json.loads here would raise out of RelayClient.__init__
+            # so `printer-svc relay run` never reaches run_forever and systemd
+            # crash-loops until hand-repaired. Empty fails safe -- prints are
+            # rejected until the allow-list is re-synced from the hub. Mirrors
+            # JobMap's bad-line tolerance.
+            try:
+                self._data = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError, TypeError) as exc:
+                logger.warning("relay: allowlist.json unreadable (%s); starting empty", exc)
+                self._data = {}
 
     def _flush(self) -> None:
         _atomic_write(self._path, json.dumps(self._data, sort_keys=True).encode())
@@ -91,7 +114,16 @@ class InviteStore:
         self._path = path
         self._invite_ids: set[str] = set()
         if path.exists():
-            self._invite_ids = set(json.loads(path.read_text()))
+            # Tolerate a torn invites.json (power cut mid-write): an unguarded
+            # json.loads would crash RelayClient.__init__ and systemd would
+            # crash-loop the relay. Empty holds any pending friends un-accepted
+            # until the user re-issues an invite -- safe, never auto-adds. Mirrors
+            # JobMap's bad-line tolerance.
+            try:
+                self._invite_ids = set(json.loads(path.read_text()))
+            except (json.JSONDecodeError, OSError, TypeError) as exc:
+                logger.warning("relay: invites.json unreadable (%s); starting empty", exc)
+                self._invite_ids = set()
 
     def record(self, invite_id: str) -> None:
         self._invite_ids.add(invite_id)

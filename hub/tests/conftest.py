@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from hub.config import HubConfig
 from hub.db import init_models, make_engine, make_sessionmaker
 from hub.jobs.wakeup import WakeupRegistry
+from hub.presence import Presence
 from hub.routes import AppDeps
 
 
@@ -32,7 +33,7 @@ async def app_client(sm):
     # Tests drive the app over http:// via ASGITransport, so the Secure cookie
     # flag must be off or the cookie jar would drop the console session cookie.
     deps = AppDeps(config=HubConfig.from_env({"HUB_SESSION_HTTPS_ONLY": "false"}),
-                   sessionmaker=sm, wake=WakeupRegistry(), online=set())
+                   sessionmaker=sm, wake=WakeupRegistry(), online=Presence())
     app = create_app(deps, run_sweeper=False)  # no background sweeper in tests
     async with LifespanManager(app):
         transport = ASGITransport(app=app)

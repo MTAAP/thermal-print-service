@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hub.capabilities import CapabilityError, schema_for_recipient, validate_document
+from hub.config import HubConfig
 from hub.friends import are_friends, resolve_handles
 from hub.ids import new_id
 from hub.jobs.wakeup import WakeupRegistry
@@ -29,6 +31,54 @@ class SendConflict(Exception):
     def __init__(self, detail: dict) -> None:
         super().__init__(detail["message"])
         self.detail = detail
+
+
+class SendValidationError(Exception):
+    """A /send request exceeded a configured payload bound (recipient count,
+    document size, or raw PNG size). The route maps it to a 422 -- a clean
+    rejection at the boundary so an oversized blob never reaches Postgres."""
+
+
+@dataclass(frozen=True)
+class SendLimits:
+    """Configured /send payload bounds, grouped so every send path (JSON /send
+    and the web composer) applies the identical caps from one source."""
+
+    max_recipients: int
+    max_document_bytes: int
+    max_raw_png_b64_bytes: int
+
+    @classmethod
+    def from_config(cls, config: HubConfig) -> SendLimits:
+        return cls(
+            max_recipients=config.max_recipients,
+            max_document_bytes=config.max_document_bytes,
+            max_raw_png_b64_bytes=config.max_raw_png_b64_bytes,
+        )
+
+
+def _check_send_limits(
+    to: list[str], document: dict | None, raw_png_b64: str | None, limits: SendLimits
+) -> None:
+    # Bound the request at the boundary, before any rows are created, so one
+    # friend cannot flood the shared jobs.payload with multi-megabyte blobs or a
+    # huge recipient fan-out. Caps are generous (see config) -- this stops abuse,
+    # not legitimate large prints.
+    if len(to) > limits.max_recipients:
+        raise SendValidationError(
+            f"too many recipients: {len(to)} (max {limits.max_recipients})"
+        )
+    if raw_png_b64 is not None and len(raw_png_b64) > limits.max_raw_png_b64_bytes:
+        raise SendValidationError(
+            f"raw_png_b64 too large: {len(raw_png_b64)} bytes "
+            f"(max {limits.max_raw_png_b64_bytes})"
+        )
+    if document is not None:
+        size = len(json.dumps(document, separators=(",", ":")).encode())
+        if size > limits.max_document_bytes:
+            raise SendValidationError(
+                f"document too large: {size} bytes (max {limits.max_document_bytes})"
+            )
 
 
 def _now() -> datetime:
@@ -91,8 +141,9 @@ def _throttled(sender_handle: str, limit_per_min: int) -> bool:
 async def send_document(
     session: AsyncSession, wake: WakeupRegistry, *, sender_handle: str,
     to: list[str], document: dict | None, idempotency_key: str | None,
-    sender_rate_per_min: int, raw_png_b64: str | None = None,
+    sender_rate_per_min: int, limits: SendLimits, raw_png_b64: str | None = None,
 ) -> SendResp:
+    _check_send_limits(to, document, raw_png_b64, limits)
     payload_kind = _payload_kind(document, raw_png_b64)
     payload_hash = _payload_hash(to, payload_kind, document, raw_png_b64)
 

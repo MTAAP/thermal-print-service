@@ -5,7 +5,7 @@ IN_FLIGHT = {"queued", "leased", "delivered"}
 TERMINAL = {
     "relay_expired", "rejected_not_allowlisted", "rejected_rate_limited",
     "rejected_incompatible", "printed", "printer_expired",
-    "printer_retry_timeout", "printer_unknown_partial", "failed",
+    "printer_retry_timeout", "printer_unknown_partial", "printer_lost", "failed",
 }
 STATES = IN_FLIGHT | TERMINAL
 
@@ -18,8 +18,12 @@ LOCAL_TO_HUB = {
 }
 
 # Statuses the relay may post via the status callback (post-delivery).
+# printer_lost is relay-only -- it has no local terminal event (the local job
+# RECORD vanished before its outcome could be confirmed), so it is reportable but
+# deliberately absent from LOCAL_TO_HUB.
 RELAY_REPORTABLE = set(LOCAL_TO_HUB.values()) | {
-    "rejected_not_allowlisted", "rejected_rate_limited", "rejected_incompatible", "failed",
+    "rejected_not_allowlisted", "rejected_rate_limited", "rejected_incompatible",
+    "printer_lost", "failed",
 }
 
 

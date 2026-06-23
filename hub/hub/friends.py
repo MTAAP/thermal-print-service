@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Container
+
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +21,7 @@ async def are_friends(session: AsyncSession, owner_id: str, friend_id: str) -> b
 
 
 async def list_friends(
-    session: AsyncSession, owner_id: str, *, online_ids: set[str]
+    session: AsyncSession, owner_id: str, *, online_ids: Container[str]
 ) -> list[FriendOut]:
     rows = (
         await session.execute(

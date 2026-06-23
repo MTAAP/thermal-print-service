@@ -16,6 +16,13 @@
         send again automatically -- check with them before composing a new message.
       </p>
       {% endif %}
+      {% if r.status == "printer_lost" %}
+      <p class="lost-warning" data-testid="lost-warning">
+        The outcome could not be confirmed -- their printer's record of this job
+        was gone before it reported back. It may or may not have printed; check
+        with them before sending again.
+      </p>
+      {% endif %}
     </li>
     {% else %}
     <li class="list-empty" data-testid="no-sent">Nothing sent yet.</li>

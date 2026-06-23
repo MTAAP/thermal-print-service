@@ -11,6 +11,7 @@ from hub.config import HubConfig
 from hub.db import init_models, make_engine, make_sessionmaker
 from hub.jobs.lease import sweep
 from hub.jobs.wakeup import WakeupRegistry
+from hub.presence import Presence
 from hub.routes import (
     AppDeps,
     admin,
@@ -66,6 +67,8 @@ def create_app(deps: AppDeps, *, run_sweeper: bool = True) -> FastAPI:
 
     from starlette.middleware.sessions import SessionMiddleware
 
+    from hub.middleware import BodySizeLimitMiddleware
+
     # Signed, httpOnly, SameSite=Lax session cookie. Lax is the v1 CSRF mitigation
     # for the small trusted group (spec §2/§11); a CSRF-token layer is follow-on.
     app.add_middleware(
@@ -76,6 +79,11 @@ def create_app(deps: AppDeps, *, run_sweeper: bool = True) -> FastAPI:
         # the console session cookie (a CONSOLE bearer token) must never ride a
         # plaintext hop. Only local HTTP dev / tests set it false.
         https_only=deps.config.session_https_only,
+    )
+    # Added last == outermost: reject oversized bodies before session parsing or
+    # routing, so a multi-megabyte flood is dropped at the edge.
+    app.add_middleware(
+        BodySizeLimitMiddleware, max_body_bytes=deps.config.max_request_body_bytes
     )
 
     from pathlib import Path
@@ -98,5 +106,5 @@ def build_default_app() -> FastAPI:
     cfg = HubConfig.from_env()
     engine = make_engine(cfg.database_url)
     deps = AppDeps(config=cfg, sessionmaker=make_sessionmaker(engine),
-                   wake=WakeupRegistry(), online=set(), engine=engine)
+                   wake=WakeupRegistry(), online=Presence(), engine=engine)
     return create_app(deps)

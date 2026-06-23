@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from hub.presence import Presence
 from hub.routes import AppDeps, bearer
 
 
@@ -27,5 +28,5 @@ def test_bearer_without_scheme_raises_401():
 
 def test_appdeps_holds_dependencies():
     # Smoke: AppDeps is a plain dataclass carrying the four request-scoped deps.
-    deps = AppDeps(config=object(), sessionmaker=object(), wake=object(), online=set())
-    assert deps.online == set()
+    deps = AppDeps(config=object(), sessionmaker=object(), wake=object(), online=Presence())
+    assert deps.online is not None

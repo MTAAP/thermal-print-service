@@ -1,3 +1,5 @@
+import pytest
+
 from printer.relay.config import RelayConfig
 from printer.relay.hub_client import HubClient
 from printer.relay.local_client import LocalClient
@@ -10,6 +12,48 @@ def _cfg(relay_paths):
         "HUB_URL": "http://hub.test",
         "PRINTER_RELAY_STATE_DIR": str(relay_paths.root),
     })
+
+
+class _FixedStatusLocal:
+    """get_job_status always returns the same configured local status (or None for
+    a 404). Lets a test pin each _LOCAL_TO_HUB mapping without standing up a real
+    local job in each terminal state."""
+
+    def __init__(self, status: str | None) -> None:
+        self._status = status
+
+    async def get_job_status(self, local_job_id):
+        return self._status
+
+
+@pytest.mark.parametrize(
+    ("local_status", "hub_status"),
+    [
+        ("printed", "printed"),
+        ("expired", "printer_expired"),
+        ("retry_timeout", "printer_retry_timeout"),
+        ("unknown_partial", "printer_unknown_partial"),
+        (None, "printer_lost"),  # GET /jobs/{id} 404 -> printer_lost (Fix 2)
+    ],
+)
+async def test_replay_maps_every_local_terminal_status(
+    relay_paths, mock_hub, hub_http, local_status, hub_status,
+):
+    # Pins the full _LOCAL_TO_HUB table plus the 404/None case. Before this, only
+    # `printed` and the 404 path were asserted -- expired/retry_timeout/
+    # unknown_partial mappings were untested.
+    JobMap(relay_paths.jobmap_path).put(
+        "hjmap", local_job_id="loc1", last_status="delivered"
+    )
+    client = RelayClient(
+        _cfg(relay_paths), relay_paths,
+        hub=HubClient(hub_http, device_token="dev-token", api_token="api-token"),
+        local=_FixedStatusLocal(local_status),
+    )
+    await client.replay_unfinished()
+    assert ("hjmap", hub_status) in mock_hub.statuses
+    # The map advanced to the mapped terminal status so it is not replayed again.
+    assert JobMap(relay_paths.jobmap_path).get("hjmap")["last_status"] == hub_status
 
 
 async def test_replay_reports_terminal_for_delivered_then_printed(
@@ -50,12 +94,14 @@ async def test_replay_reports_terminal_for_delivered_then_printed(
     assert JobMap(relay_paths.jobmap_path).get("hj1")["last_status"] == "printed"
 
 
-async def test_replay_reports_printer_expired_when_local_job_gone(
+async def test_replay_reports_printer_lost_when_local_job_gone(
     relay_paths, mock_hub, hub_http, fake_deps,
 ):
     from tests.conftest import lifespan_client
 
-    # Map references a local job id that never existed -> GET /jobs/{id} 404.
+    # Map references a local job id that never existed -> GET /jobs/{id} 404. A
+    # pruned local record may have aged out AFTER printing, so this reports
+    # printer_lost, NOT printer_expired (reserved for the genuine local `expired`).
     JobMap(relay_paths.jobmap_path).put(
         "hjghost", local_job_id="job_does_not_exist", last_status="delivered"
     )
@@ -66,7 +112,7 @@ async def test_replay_reports_printer_expired_when_local_job_gone(
             local=LocalClient(local_ac),
         )
         await client.replay_unfinished()
-    assert ("hjghost", "printer_expired") in mock_hub.statuses
+    assert ("hjghost", "printer_lost") in mock_hub.statuses
 
 
 async def test_replay_tolerates_hub_409_and_advances_jobmap(

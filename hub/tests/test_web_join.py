@@ -101,3 +101,26 @@ async def test_join_allows_same_origin_post(app_client):
         "code": await _make_invite(deps), "handle": "samesite", "display_name": "Same Site",
     })
     assert r.status_code == 303
+
+
+async def test_join_rejects_cross_origin_referer_when_origin_absent(app_client):
+    # Origin is the primary guard, but a no-Origin browser POST still carries a
+    # Referer. A cross-origin Referer (with no Origin) must be refused too --
+    # otherwise the fallback branch in _same_origin is dead code.
+    client, deps = app_client
+    r = await client.post("/join", follow_redirects=False,
+                          headers={"Referer": "https://evil.example/attack"}, data={
+        "code": await _make_invite(deps), "handle": "victim", "display_name": "Victim",
+    })
+    assert r.status_code == 403
+
+
+async def test_join_allows_when_no_origin_or_referer(app_client):
+    # Neither header present -> allow. A CSRF attack is browser-driven and always
+    # carries at least one of them; a header-less request is a direct client (curl,
+    # the no-JS happy path), so blocking it would break legitimate joins.
+    client, deps = app_client
+    r = await client.post("/join", follow_redirects=False, data={
+        "code": await _make_invite(deps), "handle": "headerless", "display_name": "No Headers",
+    })
+    assert r.status_code == 303

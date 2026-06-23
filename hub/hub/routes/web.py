@@ -14,7 +14,7 @@ from hub.history import list_jobs
 from hub.invites import InviteError, create_invite, redeem_invite
 from hub.routes import AppDeps
 from hub.schemas import RegisterReq
-from hub.send import send_document
+from hub.send import SendLimits, send_document
 from hub.web_auth import SESSION_TOKEN_KEY, NotAuthenticated, console_printer
 
 router = APIRouter()
@@ -202,6 +202,7 @@ async def compose_send(
             s, deps.wake, sender_handle=me.handle, to=to,
             document=_compose_document(title, message), idempotency_key=None,
             sender_rate_per_min=deps.config.sender_rate_per_min,
+            limits=SendLimits.from_config(deps.config),
         )
         # Interactive request: return only the per-recipient results fragment
         # that the compose page also includes, so HTMX swaps it into

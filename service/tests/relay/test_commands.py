@@ -85,9 +85,10 @@ def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
     InviteStore(relay_paths.invites_path).record("inv_1")
     JobMap(relay_paths.jobmap_path).put("hj1", local_job_id="loc1", last_status="delivered")
     rate_path = relay_paths.root / "rate.json"
-    assert PerFriendRateLimiter(rate_path, per_hour=1).check_and_record(
-        "alice", "2026-06-03T14:00:00+00:00"
+    PerFriendRateLimiter(rate_path, per_hour=1).record_accepted(
+        "alice", "hj-leave", "2026-06-03T14:00:00+00:00"
     )
+    assert rate_path.exists()
 
     hub_leave(relay_paths)
 

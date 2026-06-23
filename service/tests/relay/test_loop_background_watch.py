@@ -121,12 +121,13 @@ async def test_post_deadline_terminal_reported_via_periodic_replay(
     assert JobMap(relay_paths.jobmap_path).get("hj1")["last_status"] == "printed"
 
 
-async def test_vanished_local_job_uses_printer_expired_in_both_paths(
+async def test_vanished_local_job_uses_printer_lost_in_both_paths(
     relay_paths, mock_hub, hub_http,
 ):
-    # Fix D: a vanished local job (GET /jobs/{id} 404) must map to the SAME hub
-    # status from the in-loop watch and from replay. Both now use printer_expired
-    # (the joblog aged out past the deadline), not the old watch-only "failed".
+    # A vanished local job (GET /jobs/{id} 404) must map to the SAME hub status
+    # from the in-loop watch and from replay. Both use printer_lost (the joblog
+    # pruned the record, which may have aged out AFTER printing) -- NOT
+    # printer_expired, which is reserved for the genuine local `expired` event.
     AllowList(relay_paths.allowlist_path).add("alice", display_name="Alice",
                                               renderer_version=None)
     local = _ControllableLocal()
@@ -155,4 +156,4 @@ async def test_vanished_local_job_uses_printer_expired_in_both_paths(
 
     watch_status = next(s for (j, s) in mock_hub.statuses if j == "hjwatch")
     replay_status = next(s for (j, s) in mock_hub.statuses if j == "hjreplay")
-    assert watch_status == replay_status == "printer_expired"
+    assert watch_status == replay_status == "printer_lost"

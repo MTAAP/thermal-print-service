@@ -303,6 +303,14 @@ button:hover {
   background: var(--accent-soft);
 }
 
+/* printer_lost is indeterminate, not an error: the local record vanished before
+ * the outcome was confirmed. Muted + dashed to read as "unknown", deliberately
+ * calmer than the accent-red of an unsafe partial. */
+[data-status="printer_lost"] .status {
+  color: var(--ink-soft);
+  border-style: dashed;
+}
+
 /* Invite code: the thing a user copies onto another's printer. */
 .invite-slot {
   margin: 0.6rem 0;
@@ -328,6 +336,17 @@ button:hover {
   border-radius: 4px;
   background: var(--accent-soft);
   color: var(--accent);
+  font-size: 0.85rem;
+}
+
+/* The indeterminate-outcome notice for printer_lost: an advisory, not an alarm.
+ * Muted dashed border instead of the partial-warning's solid stamp-red. */
+.lost-warning {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  color: var(--ink-soft);
   font-size: 0.85rem;
 }
 

@@ -27,10 +27,20 @@ _LOCAL_TO_HUB = {
     "unknown_partial": "printer_unknown_partial",
 }
 _LOCAL_TERMINAL = set(_LOCAL_TO_HUB)
+# Reported when a local /jobs/{id} 404s: the local joblog prunes by record-count
+# and byte-size and drops OLD TERMINAL jobs (including printed ones), so a job
+# that actually PRINTED then aged out must NOT be reported as printer_expired
+# (which is reserved for the genuine local `expired` event). printer_lost means
+# "local job record vanished before its outcome could be confirmed; may or may
+# not have printed." It has no local-event source -- it is the relay's "record
+# gone" signal only -- so it is deliberately NOT in _LOCAL_TO_HUB.
+_PRINTER_LOST = "printer_lost"
 # Hub statuses that end the job from the relay's perspective (for JobMap.unfinished).
+# printer_lost is included so a reported "record gone" job is treated as terminal
+# and not endlessly replayed.
 _HUB_TERMINAL = set(_LOCAL_TO_HUB.values()) | {
     "rejected_not_allowlisted", "rejected_rate_limited",
-    "rejected_incompatible", "failed",
+    "rejected_incompatible", "failed", _PRINTER_LOST,
 }
 
 
@@ -103,8 +113,15 @@ class RelayClient:
             await self._hub.post_status(hub_job_id, "rejected_not_allowlisted")
             return
 
-        # Gate 2: per-friend rate limit (spec 7.1), deterministic by sent_at.
-        if not self._ratelimit.check_and_record(sender, sent_at):
+        # Gate 2: per-friend rate limit (spec 7.1). The DECISION runs before
+        # _submit (so an over-limit job is rejected before any work), but the slot
+        # is only durably consumed once the job is ACCEPTED locally (in
+        # _handle_submit_result). A deterministic non-accept -- a malformed payload
+        # (-> "failed" below), or INCOMPATIBLE/TOO_LARGE/IDEMPOTENCY_MISMATCH --
+        # must NOT burn a slot, or a misbehaving sender could exhaust its own quota
+        # on jobs that never print. allow() is keyed on hub_job_id, so a QUEUE_FULL
+        # redelivery (same hub_job_id) is idempotent and never double-counts.
+        if not self._ratelimit.allow(sender, hub_job_id, sent_at):
             await self._hub.post_status(hub_job_id, "rejected_rate_limited")
             return
 
@@ -130,7 +147,7 @@ class RelayClient:
             await self._hub.post_status(hub_job_id, "failed")
             return
 
-        await self._handle_submit_result(hub_job_id, result)
+        await self._handle_submit_result(hub_job_id, result, sender=sender, sent_at=sent_at)
 
     async def _submit(
         self, job: dict[str, Any], hub_job_id: str, sender: str, sent_at: str
@@ -169,9 +186,17 @@ class RelayClient:
             raise ValueError("raw payload exceeds max_raw_payload_bytes")
         return png
 
-    async def _handle_submit_result(self, hub_job_id: str, result: SubmitResult) -> None:
+    async def _handle_submit_result(
+        self, hub_job_id: str, result: SubmitResult, *, sender: str, sent_at: str
+    ) -> None:
         assert self._hub is not None
         if result.outcome is SubmitOutcome.ACCEPTED:
+            # Durably consume the rate-limit slot ONLY now that the job is accepted
+            # locally (Gate 2 above made the decision but deferred the commit). A
+            # deterministic non-accept below never reaches here, so it never burns a
+            # slot. Idempotent on hub_job_id: a redelivery that re-accepts (e.g.
+            # after a QUEUE_FULL backlog drains) does not double-count.
+            self._ratelimit.record_accepted(sender, hub_job_id, sent_at)
             await self._on_accepted(hub_job_id, result.local_job_id or "")
             return
         if result.outcome is SubmitOutcome.INCOMPATIBLE:
@@ -228,11 +253,13 @@ class RelayClient:
         while asyncio.get_event_loop().time() < deadline:
             status = await self._local.get_job_status(local_job_id)
             if status is None:
-                # Local job gone (joblog aged out past the deadline) -> report
-                # printer_expired and stop (spec 7.3). Same status the startup
-                # replay path uses for the identical 404 condition; the two paths
-                # must agree on the hub status for a vanished local job.
-                await self._report_terminal(hub_job_id, local_job_id, "printer_expired")
+                # Local job gone (joblog pruned the record) -> report printer_lost
+                # and stop (spec 7.3). The record may have aged out AFTER printing,
+                # so this is NOT printer_expired (reserved for the genuine local
+                # `expired` event). Same status the startup replay path uses for the
+                # identical 404 condition; the two paths must agree on the hub status
+                # for a vanished local job.
+                await self._report_terminal(hub_job_id, local_job_id, _PRINTER_LOST)
                 return
             if status in _LOCAL_TERMINAL:
                 await self._report_terminal(hub_job_id, local_job_id,
@@ -270,7 +297,9 @@ class RelayClient:
         await self._hub.ack(hub_job_id)
         status = await self._local.get_job_status(local_job_id)
         if status is None:
-            await self._report_terminal(hub_job_id, local_job_id, "printer_expired")
+            # Local record vanished (joblog pruned) -> printer_lost, not
+            # printer_expired (same 404 mapping as the watch/replay paths).
+            await self._report_terminal(hub_job_id, local_job_id, _PRINTER_LOST)
         elif status in _LOCAL_TERMINAL:
             await self._report_terminal(hub_job_id, local_job_id, _LOCAL_TO_HUB[status])
         # else still queued/printing: replay_unfinished re-reports next cycle.
@@ -283,7 +312,10 @@ class RelayClient:
             local_job_id = entry["local_job_id"]
             status = await self._local.get_job_status(local_job_id)
             if status is None:
-                await self._report_terminal(hub_job_id, local_job_id, "printer_expired")
+                # Local record vanished (joblog pruned) -> printer_lost, not
+                # printer_expired; the record may have aged out after printing.
+                # Must agree with the in-loop watch's 404 mapping.
+                await self._report_terminal(hub_job_id, local_job_id, _PRINTER_LOST)
             elif status in _LOCAL_TERMINAL:
                 await self._report_terminal(hub_job_id, local_job_id, _LOCAL_TO_HUB[status])
             # still queued/printing: leave for the next replay/poll cycle.
@@ -354,16 +386,27 @@ class RelayClient:
                 reconnect = False
                 try:
                     while True:
-                        current_creds = self._load_creds()
-                        if current_creds is None:
-                            logger.info("relay: hub credentials removed; stopping relay")
-                            return
-                        if current_creds != creds:
-                            logger.info("relay: hub credentials changed; reconnecting")
-                            creds = current_creds
-                            reconnect = True
-                            break
                         try:
+                            # Reload creds INSIDE the try so a torn read (a
+                            # concurrent `hub join`/`leave` CLI rewriting the file,
+                            # or a power cut mid-save) backs off like any other
+                            # transient fault instead of escaping run_forever and
+                            # crash-looping the unit. load() returns None for BOTH a
+                            # genuine leave (file gone) and a torn read, so we
+                            # disambiguate by existence: a vanished file is a real
+                            # leave -> stop; a present-but-unreadable file is
+                            # transient -> raise into the backoff path below.
+                            current_creds = self._load_creds()
+                            if current_creds is None:
+                                if not self._paths.creds_path.exists():
+                                    logger.info("relay: hub credentials removed; stopping relay")
+                                    return
+                                raise RuntimeError("creds.json present but unreadable")
+                            if current_creds != creds:
+                                logger.info("relay: hub credentials changed; reconnecting")
+                                creds = current_creds
+                                reconnect = True
+                                break
                             # Replay + capability report + friend sync all run INSIDE
                             # the reconnect guard so a transient hub error during
                             # startup replay (e.g. a 409 that was a permanent

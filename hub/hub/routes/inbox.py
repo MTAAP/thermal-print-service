@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
@@ -24,7 +26,16 @@ async def _device(deps: AppDeps, s, authorization: str | None):
 async def get_inbox(request: Request, wait: float | None = None,
                     authorization: str | None = Header(default=None)):
     deps: AppDeps = request.app.state.deps
-    wait_s = deps.config.long_poll_wait_s if wait is None else float(wait)
+    # Clamp the client-requested hold to the server's configured long-poll window.
+    # An unbounded wait (e.g. ?wait=inf or ?wait=1e9) would pin a connection and an
+    # asyncio task for ~forever -- a DoS any valid DEVICE token could trigger. The
+    # client must never hold a poll longer than the window the server advertises.
+    if wait is None:
+        wait_s = deps.config.long_poll_wait_s
+    else:
+        if not math.isfinite(wait):
+            raise HTTPException(status_code=400, detail="wait must be a finite number")
+        wait_s = max(0.0, min(float(wait), deps.config.long_poll_wait_s))
     poll_id = new_id("poll")
     async with deps.sessionmaker() as s:
         me = await _device(deps, s, authorization)
@@ -53,7 +64,7 @@ async def get_inbox(request: Request, wait: float | None = None,
             "sent_at": job.sent_at.isoformat(), "payload": job.payload,
         }}
     finally:
-        deps.online.discard(me.id)
+        deps.online.release(me.id)
 
 
 @router.post("/jobs/{job_id}/ack")

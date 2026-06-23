@@ -65,3 +65,67 @@ async def test_api_token_cannot_poll_inbox(app_client):
     alice, bob = await _join_pair(deps)
     r = await client.get("/inbox?wait=1", headers={"Authorization": f"Bearer {bob.api_token}"})
     assert r.status_code == 403
+
+
+async def test_status_rejects_unknown_status_string(app_client):
+    # A status outside RELAY_REPORTABLE is a 400 and must NOT mutate the job: the
+    # relay can only report from a fixed vocabulary, and an unknown string must
+    # never strand a delivered job in a bogus state.
+    from hub.models import Job
+
+    client, deps = app_client
+    alice, bob = await _join_pair(deps)
+    send = await client.post("/send", headers={"Authorization": f"Bearer {alice.api_token}"},
+                             json={"to": ["bob"], "document": {"blocks": []}})
+    job_id = send.json()["results"][0]["job_id"]
+    bob_auth = {"Authorization": f"Bearer {bob.device_token}"}
+    await client.get("/inbox?wait=1", headers=bob_auth)
+    await client.post(f"/jobs/{job_id}/ack", headers=bob_auth)
+
+    r = await client.post(f"/jobs/{job_id}/status", headers=bob_auth,
+                          json={"status": "not_a_real_status"})
+    assert r.status_code == 400
+    async with deps.sessionmaker() as s:
+        # Still 'delivered' -- the bogus status was rejected, not applied.
+        assert (await s.get(Job, job_id)).state == "delivered"
+
+
+async def test_status_on_unleased_job_returns_409(app_client):
+    # A terminal status on a job that was never leased/acked (still 'queued') is a
+    # 409: report_terminal only advances jobs in {leased, delivered}.
+    client, deps = app_client
+    alice, bob = await _join_pair(deps)
+    send = await client.post("/send", headers={"Authorization": f"Bearer {alice.api_token}"},
+                             json={"to": ["bob"], "document": {"blocks": []}})
+    job_id = send.json()["results"][0]["job_id"]
+    bob_auth = {"Authorization": f"Bearer {bob.device_token}"}
+    # No /inbox lease, no /ack: the job is still 'queued'.
+    r = await client.post(f"/jobs/{job_id}/status", headers=bob_auth, json={"status": "printed"})
+    assert r.status_code == 409
+
+
+async def test_device_token_cannot_list_friends(app_client):
+    # GET /friends is api/console-only: a DEVICE token (the Pi's poll/ack/status
+    # credential) must not be able to enumerate the friend graph.
+    client, deps = app_client
+    _alice, bob = await _join_pair(deps)
+    r = await client.get("/friends", headers={"Authorization": f"Bearer {bob.device_token}"})
+    assert r.status_code == 403
+
+
+async def test_device_token_cannot_create_invite(app_client):
+    # POST /invites is api/console-only: a DEVICE token cannot mint member invites.
+    client, deps = app_client
+    _alice, bob = await _join_pair(deps)
+    r = await client.post("/invites", headers={"Authorization": f"Bearer {bob.device_token}"})
+    assert r.status_code == 403
+
+
+async def test_device_token_cannot_read_friend_schema(app_client):
+    # GET /friends/{handle}/schema is api/console-only: a DEVICE token cannot probe
+    # a friend's capability schema.
+    client, deps = app_client
+    alice, bob = await _join_pair(deps)
+    r = await client.get(f"/friends/{alice.handle}/schema",
+                         headers={"Authorization": f"Bearer {bob.device_token}"})
+    assert r.status_code == 403
