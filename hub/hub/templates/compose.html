@@ -9,7 +9,9 @@
       {% for f in friends %}
       <label class="recipient-option">
         <input type="checkbox" name="to" value="{{ f.handle }}">
-        {{ f.display_name }}
+        <span class="name">{{ f.display_name }}</span>
+        <span class="handle" data-handle="{{ f.handle }}">@{{ f.handle }}</span>
+        {% if f.online %}<span class="status status-online" data-status="online">online</span>{% endif %}
       </label>
       {% else %}
       <p class="list-empty" data-testid="no-recipients">No friends to send to yet.</p>

@@ -266,6 +266,34 @@ button:hover {
   font-weight: 600;
 }
 
+/* The @handle disambiguates friends who share a display name (a real case:
+ * one person joining twice). Quiet, monospace, secondary to the display name. */
+.handle {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+/* Remove-friend control: pushed to the row's trailing edge, quiet until hovered,
+ * then receipt-stamp red so a destructive action reads as one. */
+.remove-friend {
+  margin-left: auto;
+}
+
+.btn-remove {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+}
+
+.btn-remove:hover {
+  color: var(--paper);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .peer,
 .to {
   font-family: var(--font-mono);

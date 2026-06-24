@@ -11,21 +11,8 @@
     {% include "invite_code.html" %}
     {% endif %}
   </div>
-  <ul class="list friends-list" data-testid="friends-list">
-    {% for f in friends %}
-    <li class="list-row" data-friend="{{ f.handle }}" data-online="{{ 'true' if f.online else 'false' }}">
-      <span class="name">{{ f.display_name }}</span>
-      {% if f.online %}
-        <span class="status status-online" data-status="online">online</span>
-      {% elif f.last_seen_at %}
-        <span class="status" data-status="last-seen">last seen {{ f.last_seen_at }}</span>
-      {% else %}
-        <span class="status" data-status="offline">offline</span>
-      {% endif %}
-    </li>
-    {% else %}
-    <li class="list-empty" data-testid="no-friends">No friends yet. Generate an invite code to add one.</li>
-    {% endfor %}
-  </ul>
+  <div id="friends-slot" class="friends-slot">
+    {% include "friends_list.html" %}
+  </div>
 </section>
 {% endblock %}

@@ -1,0 +1,23 @@
+<ul class="list friends-list" data-testid="friends-list">
+  {% for f in friends %}
+  <li class="list-row" data-friend="{{ f.handle }}" data-online="{{ 'true' if f.online else 'false' }}">
+    <span class="name">{{ f.display_name }}</span>
+    <span class="handle" data-handle="{{ f.handle }}">@{{ f.handle }}</span>
+    {% if f.online %}
+      <span class="status status-online" data-status="online">online</span>
+    {% elif f.last_seen_at %}
+      <span class="status" data-status="last-seen">last seen {{ f.last_seen_at }}</span>
+    {% else %}
+      <span class="status" data-status="offline">offline</span>
+    {% endif %}
+    <form class="remove-friend" method="post" action="/friends/{{ f.handle }}/remove"
+          hx-post="/friends/{{ f.handle }}/remove" hx-target="#friends-slot" hx-swap="innerHTML"
+          hx-confirm="Remove {{ f.display_name }} (@{{ f.handle }}) from your friends?">
+      <button type="submit" class="btn-remove" data-testid="remove-friend"
+              aria-label="Remove @{{ f.handle }}">Remove</button>
+    </form>
+  </li>
+  {% else %}
+  <li class="list-empty" data-testid="no-friends">No friends yet. Generate an invite code to add one.</li>
+  {% endfor %}
+</ul>
