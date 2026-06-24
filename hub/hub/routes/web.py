@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from hub.auth import mint_console_token
-from hub.friends import list_friends
+from hub.friends import list_friends, resolve_handles, unfriend
 from hub.history import list_jobs
 from hub.invites import InviteError, create_invite, redeem_invite
 from hub.routes import AppDeps
@@ -102,6 +102,36 @@ async def make_invite(request: Request):
     # No-JS fallback: the full friends page, with the code rendered in its slot.
     return _templates.TemplateResponse(request, "friends.html", {
         "me": me.handle, "friends": friends, "invite_code": code, "join_url": join,
+    })
+
+
+@router.post("/friends/{handle}/remove")
+async def remove_friend(request: Request, handle: str):
+    deps: AppDeps = request.app.state.deps
+    async with deps.sessionmaker() as s:
+        try:
+            me = await console_printer(request, s)
+        except NotAuthenticated:
+            return _login_redirect(request)
+        # Resolve by handle, not display name: same-display-name friends are a
+        # real case (e.g. "Robin" joined twice as `robin` and `rdbeerman`), so
+        # the handle is the only safe key. A handle that is not a printer, or not
+        # actually a friend, makes unfriend delete 0 rows -- a safe no-op. Guard
+        # against self-removal explicitly.
+        known, _unknown = await resolve_handles(s, [handle])
+        friend_id = known.get(handle)
+        if friend_id is not None and friend_id != me.id:
+            await unfriend(s, me.id, friend_id)
+        friends = await list_friends(s, me.id, online_ids=deps.online)
+        # Interactive: return ONLY the friends-list fragment for the #friends-slot
+        # innerHTML swap (mirrors invite/compose -- never nest the full console).
+        if _is_htmx(request):
+            return _templates.TemplateResponse(
+                request, "friends_list.html", {"me": me.handle, "friends": friends}
+            )
+    # No-JS fallback: the full friends page with the updated list.
+    return _templates.TemplateResponse(request, "friends.html", {
+        "me": me.handle, "friends": friends,
     })
 
 
