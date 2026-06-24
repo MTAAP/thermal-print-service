@@ -94,6 +94,26 @@ for unit in printer.service printer-relay.service; do
 done
 $SUDO systemctl daemon-reload
 
+# Host-liveness hardening (see deploy/io-stall-watchdog.sh for the full rationale).
+# A systemd RuntimeWatchdog only proves PID1 is alive: during an SD-card I/O stall
+# the rootfs stops accepting writes and every disk-bound process wedges in D-state,
+# yet systemd keeps petting /dev/watchdog (its keepalive never touches disk), so the
+# host can stay dark indefinitely instead of resetting. This health-gated watchdog
+# probes a real write+fsync and forces a sysrq reset when the rootfs goes silent,
+# turning a multi-hour hang into ~80s of auto-recovery. The journal size cap bounds
+# SD write wear and keeps logs across unclean reboots.
+echo "==> install I/O-stall host watchdog + journal size cap"
+$SUDO install -m 0755 deploy/io-stall-watchdog.sh /usr/local/sbin/io-stall-watchdog.sh
+$SUDO install -m 0644 deploy/io-stall-watchdog.service /etc/systemd/system/io-stall-watchdog.service
+$SUDO install -d -m 0755 /etc/sysctl.d
+$SUDO install -m 0644 deploy/io-stall-watchdog.sysctl.conf /etc/sysctl.d/99-io-stall-watchdog.conf
+$SUDO install -d -m 0755 /etc/systemd/journald.conf.d
+$SUDO install -m 0644 deploy/journald-size.conf /etc/systemd/journald.conf.d/00-size.conf
+$SUDO sysctl --system >/dev/null
+$SUDO systemctl restart systemd-journald
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable --now io-stall-watchdog.service
+
 echo "==> done. Reboot once for lp group to take effect, or open a new login shell."
 echo "    To join the friend network: printer-svc hub join <code> --handle <h> --display-name <n>"
 echo "    Then: sudo systemctl enable --now printer-relay.service"

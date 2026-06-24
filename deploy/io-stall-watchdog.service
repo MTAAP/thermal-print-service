@@ -1,0 +1,16 @@
+[Unit]
+Description=I/O-stall watchdog (hard-reset if the SD/rootfs wedges)
+Documentation=https://github.com/MTAAP/thermal-print-service
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/io-stall-watchdog.sh
+Restart=always
+RestartSec=5
+Nice=-5
+# Never let the host's last-resort recovery daemon be an early OOM victim.
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target
