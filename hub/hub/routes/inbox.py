@@ -88,6 +88,26 @@ class StatusReq(BaseModel):
     status: str
 
 
+class AlertReq(BaseModel):
+    ntfy_topic: str | None = None
+
+
+@router.put("/printers/me/alerts")
+async def put_my_alerts(request: Request, body: AlertReq,
+                        authorization: str | None = Header(default=None)):
+    deps: AppDeps = request.app.state.deps
+    topic = body.ntfy_topic.strip() if body.ntfy_topic is not None else None
+    if topic == "":
+        topic = None
+    if topic is not None and len(topic) > 256:
+        raise HTTPException(status_code=400, detail="ntfy_topic too long")
+    async with deps.sessionmaker() as s:
+        me = await _device(deps, s, authorization)
+        me.alert_ntfy_topic = topic
+        await s.commit()
+    return {"ok": True, "ntfy_topic": topic}
+
+
 @router.post("/jobs/{job_id}/status")
 async def post_status(request: Request, job_id: str, body: StatusReq,
                       authorization: str | None = Header(default=None)):

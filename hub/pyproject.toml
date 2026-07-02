@@ -8,7 +8,10 @@ dependencies = [
   "uvicorn[standard]>=0.32",
   "pydantic>=2.9",
   "sqlalchemy>=2.0",
+  "greenlet>=3.0",
+  "alembic>=1.17",
   "asyncpg>=0.30",
+  "httpx>=0.27",
   "jsonschema>=4.23",
   "jinja2>=3.1.4",
   "itsdangerous>=2.2.0",
@@ -19,7 +22,6 @@ dependencies = [
 dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
-  "httpx>=0.27",
   "asgi-lifespan>=2.1",
   "aiosqlite>=0.20",
   "ruff>=0.7",
@@ -41,7 +43,13 @@ include = ["hub*"]
 # Without this, a pip-installed hub (the Docker image) boots straight into a
 # RuntimeError when create_app mounts /static and web.py loads its templates.
 [tool.setuptools.package-data]
-hub = ["static/*", "static/**/*", "templates/*", "templates/**/*"]
+hub = [
+  "alembic/script.py.mako",
+  "static/*",
+  "static/**/*",
+  "templates/*",
+  "templates/**/*",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

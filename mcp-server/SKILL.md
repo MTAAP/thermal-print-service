@@ -59,6 +59,8 @@ Some shapes the surface accommodates well (not an exhaustive list — invent fre
 
 `print_document(document, idempotency_key?)` — primary tool. Compose a JSON document made of blocks; the Pi renders typesetting and prints. The `document` parameter's full schema is supplied at runtime (the MCP server fetches it from the printer service at boot), so the available block types and their fields are always current. For documents submitted this way, the Pi-side renderer is the single source of typographic truth — every glyph is composed in PIL, so output looks identical regardless of sender. (The HTML pipeline below uses a different render path with its own typography; reach for it only when the block schema's bounded surface is the limit.)
 
+`preview_document(document, idempotency_key?)` — render the same JSON document without printing. Use this before `print_document` when layout, truncation, inverse text, image legibility, or paper length is uncertain; it returns the PNG preview plus estimated paper length, chunk count, and renderer version. It previews only local prints — `send_to_friend` renders on the recipient's printer, so there is no friend-side preview.
+
 `print_image(png_base64, idempotency_key?)` — escape hatch for pixel-controlled output (custom dithers, generative art, ASCII pieces the block schema can't express). PNG must be exactly 576px wide.
 
 `get_status()` — printer health: connected, paper present, cover closed, queue depth, clock sync, uptime. Use before printing if you want to confirm readiness, or to diagnose a stuck job.

@@ -22,6 +22,12 @@ class RelayPaths:
         return self.root / "allowlist.json"
 
     @property
+    def commands_path(self) -> Path:
+        # Durable CLI-to-relay command inbox. The relay is the sole allow-list
+        # writer; local commands append here for the loop to consume.
+        return self.root / "commands.jsonl"
+
+    @property
     def invites_path(self) -> Path:
         return self.root / "invites.json"
 

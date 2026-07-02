@@ -48,7 +48,16 @@ def sample_schema_payload() -> dict:
             "title": "Document",
             "properties": {
                 "document_type": {"type": "string"},
-                "options": {"type": "object"},
+                "options": {
+                    "type": "object",
+                    "properties": {
+                        "not_before": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "Hold the job until options.not_before.",
+                        }
+                    },
+                },
                 "blocks": {
                     "type": "array",
                     "items": {"$ref": "#/$defs/AnyBlock"},

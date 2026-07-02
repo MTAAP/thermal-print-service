@@ -11,14 +11,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HUB_HOST=0.0.0.0
+    HUB_HOST=0.0.0.0 \
+    HUB_BUILD_INFO_PATH=/app/build_info.txt
 
 WORKDIR /app
 
 # Only what pip needs to build + resolve. Tests, caches and the local .venv are
 # kept out of the build context by .dockerignore.
 COPY pyproject.toml README.md constraints.txt ./
-COPY hub ./hub
+# Copy the remaining build context so generated build_info.txt is included when
+# present, while absent local-dev build_info.txt still keeps docker build working.
+COPY . ./
 
 RUN pip install -c constraints.txt .
 

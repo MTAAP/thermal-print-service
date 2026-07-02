@@ -19,7 +19,30 @@ def test_options_default_match_spec():
     assert doc.options.feed_lines_after == 2
     assert doc.options.preserve_paper is False
     assert doc.options.max_length_mm == 2000
+    assert doc.options.not_before is None
     assert doc.options.expires_at is None
+
+
+def test_options_rejects_expiry_not_after_not_before():
+    payload = {
+        "options": {
+            "not_before": "2026-07-02T08:00:00Z",
+            "expires_at": "2026-07-02T08:00:00Z",
+        },
+        "blocks": [{"type": "paragraph", "text": "scheduled"}],
+    }
+    try:
+        Document.model_validate(payload)
+    except Exception as exc:
+        errs = to_structured_errors(exc)
+        assert errs
+        assert errs[0]["field"].startswith("options")
+        assert "expires_at" in errs[0]["message"]
+        assert "not_before" in errs[0]["message"]
+        assert errs[0]["valid_values"] is None
+        assert errs[0]["migration_hint"] is None
+        return
+    pytest.fail("expected validation error")
 
 
 def test_unknown_block_type_yields_structured_error():

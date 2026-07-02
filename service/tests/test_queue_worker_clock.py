@@ -55,6 +55,42 @@ async def test_worker_does_not_expire_when_clock_unsynced(state_dir):
 
 
 @pytest.mark.asyncio
+async def test_worker_keeps_not_before_job_held_when_clock_unsynced(state_dir):
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    job_id = "JOB-UNSYNC-HOLD"
+    not_before = (datetime.now(UTC) - timedelta(seconds=10)).isoformat()
+    expires_at = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+        expires_at=expires_at, not_before=not_before,
+    ))
+    cache.put_chunks(job_id, [b"PNG"])
+
+    deps = WorkerDeps(
+        joblog=log, png_cache=cache, transport=transport,
+        retry_interval_s=0.01, max_retry_age_s=10.0,
+        clock_ok=lambda: False,
+    )
+    worker = PrintWorker(
+        deps,
+        options_lookup=lambda j: (True, 2, expires_at, not_before, False),
+    )
+
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    events = [r.event for r in log.replay()]
+    assert events == ["accepted"]
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
 async def test_worker_resumes_expiry_when_clock_recovers(state_dir):
     log = JobLog(state_dir / "log.jsonl")
     cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)

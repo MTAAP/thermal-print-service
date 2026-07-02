@@ -15,7 +15,7 @@ Five installable Python packages, each with its own `pyproject.toml` and `.venv`
 - [`hub/`](./hub) — public relay hub for the friend network. Runs as `printer-hub`, stores and routes jobs between friends' Pis, and owns the web console templates/static assets.
 - [`deploy/`](./deploy) — install + sync scripts for the Pi.
 
-`printer-core` is not on PyPI; both `service/` and `design/` install it as an editable sibling. The deploy scripts handle the install order. For local development, see the per-package `pyproject.toml`s and the `Makefile` (`make verify` runs tests + lint + typecheck across all five).
+The `printer-core/` directory builds the `thermal-printer-core` distribution; both `service/` and `design/` install it as an editable sibling before their own dependencies. The deploy scripts handle the install order. For local development, see the per-package `pyproject.toml`s and the `Makefile` (`make verify` runs tests + lint + typecheck across all five). Do not use the unrelated PyPI distribution named `printer-core`.
 
 ## Install on the Pi
 
@@ -96,7 +96,7 @@ python3 -m venv hub/.venv && hub/.venv/bin/pip install -e 'hub[dev]'
 python3 -m venv design/.venv && design/.venv/bin/pip install -e ./printer-core && design/.venv/bin/pip install -e 'design[dev]' && design/.venv/bin/playwright install chromium
 ```
 
-Order matters: install `printer-core` editable into a venv before installing any package that depends on it (`service`, `design`). The deploy scripts handle this for the Pi-side venv automatically.
+Order matters: install the editable `thermal-printer-core` distribution from `printer-core/` into a venv before installing any package that depends on it (`service`, `design`). The deploy scripts handle this for the Pi-side venv automatically.
 
 ```bash
 make verify    # tests + lint + typecheck across all five packages

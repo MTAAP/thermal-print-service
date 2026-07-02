@@ -74,7 +74,7 @@ def fake_deps(state_dir):
         process_started_at=0.0,
         clock_now=lambda: 0.0,
     )
-    options_store: dict[str, tuple[bool, int, str | None, bool]] = {}
+    options_store: dict[str, tuple[bool, int, str | None, str | None, bool]] = {}
     worker = PrintWorker(
         WorkerDeps(joblog=log, png_cache=cache, transport=transport,
                    retry_interval_s=0.01, max_retry_age_s=60),

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from typing import Any
 
+import httpx
 import mcp.types as mcp_types
 from mcp.server import Server
 
-from printer_mcp.client import PrintServiceClient
+from printer_mcp.client import PrintServiceClient, _summarize_error
 from printer_mcp.config import McpConfig
 from printer_mcp.errors import PrintServiceError, format_for_agent
 from printer_mcp.hub_client import HubClient
@@ -166,7 +168,7 @@ def _compose_text_document(title: str, text: str) -> dict[str, Any]:
     return {"blocks": blocks}
 
 
-def _ok(payload: Any) -> list[mcp_types.TextContent]:
+def _ok(payload: Any) -> list[mcp_types.ContentBlock]:
     if isinstance(payload, dict) and "ok" in payload:
         body = payload
     else:
@@ -174,7 +176,7 @@ def _ok(payload: Any) -> list[mcp_types.TextContent]:
     return [mcp_types.TextContent(type="text", text=json.dumps(body, indent=2))]
 
 
-def _err(exc: PrintServiceError) -> list[mcp_types.TextContent]:
+def _err(exc: PrintServiceError) -> list[mcp_types.ContentBlock]:
     return [mcp_types.TextContent(type="text", text=json.dumps(format_for_agent(exc), indent=2))]
 
 
@@ -222,9 +224,23 @@ def build_server(
                     "Print a structured document on the thermal receipt printer. "
                     "Compose the document from blocks (header, paragraph, checklist, "
                     "qr, image, etc.) and the renderer turns it into typeset paper. "
+                    "Set document.options.not_before to hold a job until a future "
+                    "ISO 8601 timestamp; held jobs remain pending until eligible. "
                     f"Renderer version: {renderer}.{block_hint} "
                     "Returns 202 with id + estimated_paper_mm on success; "
                     "structured 400 with valid_values + migration_hint on schema errors."
+                ),
+                inputSchema=build_print_document_input_schema(snap.document_schema),
+            ),
+            mcp_types.Tool(
+                name="preview_document",
+                description=(
+                    "Render a structured document without printing. Compose the "
+                    "same `document` payload you would send to print_document; "
+                    "this returns the rendered PNG image plus estimated paper "
+                    "length, chunk count, and renderer version. This previews "
+                    "local print_document only; send_to_friend has no preview "
+                    "because the recipient's printer renders friend-side."
                 ),
                 inputSchema=build_print_document_input_schema(snap.document_schema),
             ),
@@ -379,11 +395,15 @@ def build_server(
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[mcp_types.TextContent]:
+    async def call_tool(
+        name: str, arguments: dict[str, Any] | None
+    ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
         try:
             if name == "print_document":
                 return await _call_print_document(client, args)
+            if name == "preview_document":
+                return await _call_preview_document(client, args)
             if name == "print_image":
                 return await _call_print_image(client, args)
             if name == "get_status":
@@ -437,7 +457,7 @@ def _require_hub_token(cfg: McpConfig) -> None:
 
 async def _call_send_to_friend(
     cfg: McpConfig, hub_client: HubClient, args: dict[str, Any]
-) -> list[mcp_types.TextContent]:
+) -> list[mcp_types.ContentBlock]:
     _require_hub_token(cfg)
     to = args.get("to")
     if not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to):
@@ -456,7 +476,7 @@ async def _call_send_to_friend(
 
 async def _call_message_friend(
     cfg: McpConfig, hub_client: HubClient, args: dict[str, Any]
-) -> list[mcp_types.TextContent]:
+) -> list[mcp_types.ContentBlock]:
     _require_hub_token(cfg)
     to = args.get("to")
     if not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to):
@@ -480,7 +500,7 @@ async def _call_message_friend(
 
 async def _call_print_document(
     client: PrintServiceClient, args: dict[str, Any]
-) -> list[mcp_types.TextContent]:
+) -> list[mcp_types.ContentBlock]:
     document = args.get("document")
     if not isinstance(document, dict):
         raise PrintServiceError(status=400, message="argument 'document' must be an object")
@@ -489,9 +509,65 @@ async def _call_print_document(
     return _ok(await client.post_print(document, idempotency_key=idem_str))
 
 
+async def _call_preview_document(
+    client: PrintServiceClient, args: dict[str, Any]
+) -> list[mcp_types.ContentBlock]:
+    document = args.get("document")
+    if not isinstance(document, dict):
+        raise PrintServiceError(status=400, message="argument 'document' must be an object")
+    idem = args.get("idempotency_key")
+    headers = {}
+    if idem:
+        headers["X-Idempotency-Key"] = str(idem)
+
+    try:
+        response = await client._http.request(
+            "POST",
+            "/print",
+            json=document,
+            params={"dry_run": "true"},
+            headers=headers,
+        )
+    except httpx.HTTPError as exc:
+        raise PrintServiceError(
+            status=0,
+            message=(
+                f"could not reach print service at {client.base_url}: "
+                f"{exc.__class__.__name__}: {exc}"
+            ),
+        ) from exc
+
+    if not response.is_success:
+        body: Any | None
+        try:
+            body = response.json()
+        except ValueError:
+            body = response.text or None
+        raise PrintServiceError(
+            status=response.status_code,
+            message=_summarize_error(response.status_code, body),
+            body=body,
+        )
+
+    summary = {
+        "ok": True,
+        "estimated_paper_mm": response.headers.get("X-Estimated-Paper-Mm"),
+        "chunk_count": response.headers.get("X-Chunk-Count"),
+        "renderer_version": response.headers.get("X-Renderer-Version"),
+    }
+    return [
+        mcp_types.ImageContent(
+            type="image",
+            data=base64.b64encode(response.content).decode("ascii"),
+            mimeType="image/png",
+        ),
+        mcp_types.TextContent(type="text", text=json.dumps(summary, indent=2)),
+    ]
+
+
 async def _call_print_image(
     client: PrintServiceClient, args: dict[str, Any]
-) -> list[mcp_types.TextContent]:
+) -> list[mcp_types.ContentBlock]:
     png_b64 = args.get("png_base64")
     if not isinstance(png_b64, str) or not png_b64:
         raise PrintServiceError(

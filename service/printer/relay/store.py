@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +16,7 @@ logger = logging.getLogger("printer.relay")
 def _atomic_write(path: Path, data: bytes) -> None:
     # Temp file in the same dir + fsync + os.replace so a crash never leaves a
     # torn file. Same durability discipline the joblog write earns the local
-    # 202 (spec 7.3): relay state must survive a power cut on a Pi Zero.
+    # 202 (spec §16.3): relay state must survive a power cut on a Pi Zero.
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
@@ -26,6 +28,19 @@ def _atomic_write(path: Path, data: bytes) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+@contextlib.contextmanager
+def _exclusive_file_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 class CredsStore:
@@ -59,7 +74,7 @@ class CredsStore:
 
 class AllowList:
     """The Pi's local auto-print allow-list. Mutated ONLY by local actions
-    (spec 5): hub join, friends accept, or a sync that matches a local invite.
+    (spec §16.2): hub join, friends accept, or a sync that matches a local invite.
     Sync may remove + refresh metadata but never silently auto-add."""
 
     def __init__(self, path: Path) -> None:
@@ -101,6 +116,70 @@ class AllowList:
         if handle in self._data:
             del self._data[handle]
             self._flush()
+
+
+class CommandInbox:
+    """Durable local command queue from short-lived CLIs to the relay loop.
+
+    Commands are append-only JSONL so the CLI never rewrites relay-owned state:
+    the long-lived relay drains this inbox and remains the only allowlist.json
+    writer, avoiding stale in-memory clobbers from a second AllowList instance.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock_path = path.with_name(f"{path.name}.lock")
+
+    def append(self, op: dict[str, Any]) -> None:
+        line = (json.dumps(op, sort_keys=True) + "\n").encode()
+        with _exclusive_file_lock(self._lock_path):
+            fd = os.open(self._path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+            try:
+                written = os.write(fd, line)
+                if written != len(line):
+                    raise OSError(
+                        f"short write to {self._path}: {written} of {len(line)} bytes"
+                    )
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+
+    def drain(self) -> list[dict[str, Any]]:
+        snapshot = self._path.with_name(f"{self._path.name}.draining")
+        ops: list[dict[str, Any]] = []
+        with _exclusive_file_lock(self._lock_path):
+            if snapshot.exists():
+                ops.extend(self._read_snapshot(snapshot))
+
+            try:
+                os.replace(self._path, snapshot)
+            except FileNotFoundError:
+                return ops
+
+            ops.extend(self._read_snapshot(snapshot))
+            return ops
+
+    def _read_snapshot(self, snapshot: Path) -> list[dict[str, Any]]:
+        ops: list[dict[str, Any]] = []
+        try:
+            for line in snapshot.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # A power cut can leave a torn final append. Bad command lines
+                # must not stop relay startup: skip the damaged op and replay
+                # every complete command, matching JobMap's bad-line tolerance.
+                try:
+                    op = json.loads(line)
+                    if not isinstance(op, dict):
+                        raise TypeError("command line is not a JSON object")
+                    ops.append(op)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    logger.warning("relay: commands.jsonl unreadable line skipped (%s)", exc)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                snapshot.unlink()
+        return ops
 
 
 class InviteStore:

@@ -1,5 +1,5 @@
 [project]
-name = "printer-core"
+name = "thermal-printer-core"
 version = "0.1.0"
 description = "Shared primitives (dither, constants) for the thermal print stack"
 requires-python = ">=3.11"

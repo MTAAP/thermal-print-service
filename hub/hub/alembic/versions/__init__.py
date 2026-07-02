@@ -1,0 +1,1 @@
+"""Hub schema migration revisions."""

@@ -3,6 +3,22 @@
 Each removal/rename gets a one-line entry with the renderer version it landed in
 and the migration hint surfaced in 400 responses.
 
+## v0.10.0
+
+Scheduled print support via `options.not_before`.
+
+- New optional `options.not_before` datetime field. A future value holds the
+  accepted job in the durable queue until the synchronized service clock reaches
+  that timestamp. Past values are valid and print immediately. `dry_run` still
+  renders immediately without enqueuing.
+- When both temporal bounds are set, `options.expires_at` must be after
+  `options.not_before`; invalid windows return the structured 400 error shape.
+- Queue dispatch is now FIFO among eligible jobs: a held older job no longer
+  blocks a later immediate job. Strict single-worker semantics and
+  durability-before-202 are unchanged.
+- Retry age is anchored at eligibility (`max(enqueue_time, not_before)`) so
+  long-scheduled jobs retain their retry budget after becoming printable.
+
 ## v0.9.1
 
 ascii_art legibility fix — both `font: "default"` (Spleen 8×16) and

@@ -29,11 +29,11 @@ Tailnet-attached thermal receipt printer. JSON-in, paper-out HTTP service runnin
 
 The repo has **five separate Python packages**, each with its own `pyproject.toml` and `.venv`:
 
-- `printer-core/.venv/` — installs `printer-core/` (shared dither + constants)
-- `service/.venv/` — installs `service/` (depends on `printer-core` editable)
+- `printer-core/.venv/` — installs `printer-core/` as the `thermal-printer-core` distribution (shared dither + constants)
+- `service/.venv/` — installs `service/` (depends on editable `thermal-printer-core` from `printer-core/`)
 - `mcp-server/.venv/` — installs `mcp-server/`
 - `hub/.venv/` — installs `hub/` (dev install for tests/lint/typecheck; Railway uses `pip install -c constraints.txt .`)
-- `design/.venv/` — installs `design/` (depends on `printer-core` editable; pulls Playwright + Chromium)
+- `design/.venv/` — installs `design/` (depends on editable `thermal-printer-core` from `printer-core/`; pulls Playwright + Chromium)
 
 The top-level `Makefile` targets all five. Don't install one package's deps into the other's venv.
 
@@ -86,9 +86,9 @@ REMOTE=printer.your-tailnet.ts.net ./deploy/sync.sh # override SSH alias
 
 ### Deploying the hub (Railway)
 
-**The hub does NOT auto-deploy on push.** Because this repo is public, the Railway GitHub auto-deploy is intentionally OFF — merging to `main` does **not** redeploy the hub. The hub must be deployed **manually** (Railway CLI `railway up` from `hub/`, or a redeploy from the Railway dashboard). Config is `hub/railway.json` (Dockerfile builder, healthcheck `/healthz`) + `hub/Dockerfile` (runtime install via `pip install -c constraints.txt .`).
+**The hub does NOT auto-deploy on push.** Because this repo is public, the Railway GitHub auto-deploy is intentionally OFF — merging to `main` does **not** redeploy the hub. The supported manual path is `HUB_URL=https://hub.example.invalid make deploy-hub`: the target writes the local git SHA to ignored `hub/build_info.txt`, runs `railway up --ci` from `hub/`, then polls `${HUB_URL}/healthz` until the running hub reports the same `git_sha`. Config is `hub/railway.json` (Dockerfile builder, healthcheck `/healthz`) + `hub/Dockerfile` (runtime install via `pip install -c constraints.txt .`).
 
-Consequence for coordinated hub+relay changes: a `git push` / merge updates the code but not the running hub, so after merging hub-facing changes, trigger the manual deploy and confirm the new code is live (e.g. probe a new-behavior endpoint) **before** syncing dependent relay changes to the Pi — otherwise a new relay can talk to an old hub.
+Consequence for coordinated hub+relay changes: a `git push` / merge updates the code but not the running hub, so deploy with `make deploy-hub` and wait for the SHA match **before** syncing dependent relay changes to the Pi — otherwise a new relay can talk to an old hub. `deploy/sync.sh` also checks `${HUB_URL}/healthz` when `HUB_URL` is set and requires `SYNC_ANYWAY=1` to override a mismatch.
 
 ## Architecture invariants
 

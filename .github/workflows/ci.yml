@@ -7,7 +7,7 @@ on:
 
 jobs:
   printer-core:
-    name: printer-core py${{ matrix.python-version }}
+    name: thermal-printer-core py${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install printer-core
+      - name: Install thermal-printer-core
         run: python -m pip install -e 'printer-core[dev]'
       - name: Test printer-core
         run: python -m pytest printer-core/tests
@@ -39,8 +39,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install printer-core (editable sibling for service)
+      - name: Install thermal-printer-core (editable sibling for service)
         run: python -m pip install -e ./printer-core
+      - name: Verify thermal-printer-core origin
+        run: python -c "import printer_core, pathlib, sys; p = pathlib.Path(printer_core.__file__).resolve(); repo = pathlib.Path('.').resolve(); sys.exit(0 if repo in p.parents else 1)"
       - name: Install service
         run: python -m pip install -e 'service[dev]'
       - name: Test service
@@ -137,8 +139,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install printer-core (editable sibling for design)
+      - name: Install thermal-printer-core (editable sibling for design)
         run: python -m pip install -e ./printer-core
+      - name: Verify thermal-printer-core origin
+        run: python -c "import printer_core, pathlib, sys; p = pathlib.Path(printer_core.__file__).resolve(); repo = pathlib.Path('.').resolve(); sys.exit(0 if repo in p.parents else 1)"
       - name: Install design
         run: python -m pip install -e 'design[dev]'
       - name: Install Chromium for Playwright

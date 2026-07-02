@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import printer.queue.worker as worker_mod
 from printer.queue.cache import PngCache
 from printer.queue.joblog import JobLog, JobRecord
 from printer.queue.worker import (
@@ -18,12 +19,14 @@ from printer.transport import PrinterUnavailable
 class FakeTransport:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.payloads: list[bytes] = []
         self.fail_until: int = 0
         self.partial_fail: bool = False
         self.unavailable_until: int = 0
 
     async def print_png(self, png: bytes, *, auto_cut: bool, feed_lines_after: int) -> int:
         self.calls.append("print")
+        self.payloads.append(png)
         if len(self.calls) <= self.unavailable_until:
             raise PrinterUnavailable("printer offline (test)")
         if len(self.calls) <= self.fail_until:
@@ -31,6 +34,223 @@ class FakeTransport:
         if self.partial_fail:
             raise OSError("USB failed mid-stream")
         return 187
+
+
+@pytest.mark.asyncio
+async def test_worker_holds_job_until_not_before_then_prints(state_dir):
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    job_id = "JOB-HOLD"
+    not_before = (datetime.now(UTC) + timedelta(seconds=0.15)).isoformat()
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+        not_before=not_before,
+    ))
+    cache.put_chunks(job_id, [b"HELD"])
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.01, max_retry_age_s=10.0)
+    worker = PrintWorker(
+        deps,
+        options_lookup=lambda j: (True, 2, None, not_before, False),
+    )
+
+    await worker.start()
+    await asyncio.sleep(0.05)
+    assert transport.calls == []
+    await asyncio.sleep(0.2)
+    await worker.stop()
+
+    assert transport.payloads == [b"HELD"]
+    events = [r.event for r in log.replay()]
+    assert "printed" in events
+
+
+@pytest.mark.asyncio
+async def test_worker_dispatches_fifo_among_eligible_jobs(state_dir):
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    held_id = "JOB-HELD-FIRST"
+    immediate_id = "JOB-IMMEDIATE-SECOND"
+    later_immediate_id = "JOB-IMMEDIATE-THIRD"
+    not_before = (datetime.now(UTC) + timedelta(seconds=0.2)).isoformat()
+    log.append(JobRecord.accepted(
+        job_id=held_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="h", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+        not_before=not_before,
+    ))
+    log.append(JobRecord.accepted(
+        job_id=immediate_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="i", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+    ))
+    log.append(JobRecord.accepted(
+        job_id=later_immediate_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="i2", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+    ))
+    cache.put_chunks(held_id, [b"HELD"])
+    cache.put_chunks(immediate_id, [b"IMMEDIATE"])
+    cache.put_chunks(later_immediate_id, [b"LATER-IMMEDIATE"])
+
+    options = {
+        held_id: (True, 2, None, not_before, False),
+        immediate_id: (True, 2, None, None, False),
+        later_immediate_id: (True, 2, None, None, False),
+    }
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.01, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=lambda j: options[j])
+
+    await worker.start()
+    await asyncio.sleep(0.08)
+    assert transport.payloads == [b"IMMEDIATE", b"LATER-IMMEDIATE"]
+    await asyncio.sleep(0.2)
+    await worker.stop()
+
+    assert transport.payloads == [b"IMMEDIATE", b"LATER-IMMEDIATE", b"HELD"]
+
+
+@pytest.mark.asyncio
+async def test_retrying_job_does_not_block_later_eligible_job(state_dir):
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+    transport.fail_until = 1
+
+    retrying_id = "JOB-RETRYING-FIRST"
+    later_id = "JOB-LATER-ELIGIBLE"
+    log.append(JobRecord.accepted(
+        job_id=retrying_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="r", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+    ))
+    cache.put_chunks(retrying_id, [b"RETRYING"])
+
+    options = {
+        retrying_id: (True, 2, None, None, False),
+        later_id: (True, 2, None, None, False),
+    }
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.2, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=lambda j: options[j])
+
+    await worker.start()
+    await asyncio.sleep(0.05)
+    log.append(JobRecord.accepted(
+        job_id=later_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="l", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+    ))
+    cache.put_chunks(later_id, [b"LATER"])
+    await worker.enqueue(later_id)
+
+    await asyncio.sleep(0.08)
+    assert transport.payloads == [b"RETRYING", b"LATER"]
+
+    await asyncio.sleep(0.2)
+    await worker.stop()
+
+    assert transport.payloads == [b"RETRYING", b"LATER", b"RETRYING"]
+
+
+@pytest.mark.asyncio
+async def test_worker_replay_preserves_held_job_until_not_before(state_dir):
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    first_transport = FakeTransport()
+    second_transport = FakeTransport()
+
+    job_id = "JOB-REPLAY-HOLD"
+    not_before = (datetime.now(UTC) + timedelta(seconds=0.15)).isoformat()
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+        not_before=not_before,
+    ))
+    cache.put_chunks(job_id, [b"REPLAY"])
+
+    options_store = options_from_replay(log)
+    assert options_store[job_id] == (True, 2, None, not_before, False)
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=first_transport,
+                      retry_interval_s=0.01, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=make_options_lookup(options_store))
+
+    await worker.start()
+    await asyncio.sleep(0.05)
+    await worker.stop()
+    assert first_transport.calls == []
+    assert [r.event for r in log.replay()] == ["accepted"]
+
+    await asyncio.sleep(0.15)
+    replayed_options = options_from_replay(log)
+    replayed_deps = WorkerDeps(
+        joblog=log, png_cache=cache, transport=second_transport,
+        retry_interval_s=0.01, max_retry_age_s=10.0,
+    )
+    replayed_worker = PrintWorker(
+        replayed_deps,
+        options_lookup=make_options_lookup(replayed_options),
+    )
+    await replayed_worker.start()
+    await asyncio.sleep(0.1)
+    await replayed_worker.stop()
+
+    assert second_transport.payloads == [b"REPLAY"]
+    assert "printed" in [r.event for r in log.replay()]
+
+
+@pytest.mark.asyncio
+async def test_retry_age_starts_at_not_before_eligibility(state_dir, monkeypatch):
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=100_000)
+    transport = FakeTransport()
+    transport.fail_until = 999
+
+    job_id = "JOB-SCHEDULED-RETRY"
+    accepted_at = datetime(2026, 7, 2, 8, 0, tzinfo=UTC)
+    not_before_dt = accepted_at + timedelta(hours=20)
+    now_dt = not_before_dt + timedelta(seconds=1)
+    monkeypatch.setattr(worker_mod, "_now_utc", lambda: now_dt)
+    monkeypatch.setattr(worker_mod.time, "time", lambda: now_dt.timestamp())
+
+    log.append(JobRecord(
+        event="accepted", job_id=job_id,
+        ts=accepted_at.isoformat(timespec="seconds"),
+        sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.9.1",
+        auto_cut=True, feed_lines_after=2, expires_at=None,
+        not_before=not_before_dt.isoformat(timespec="seconds"),
+        chunk_count=1, trailing_cut=False,
+    ))
+    cache.put_chunks(job_id, [b"X"])
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.05, max_retry_age_s=60.0)
+    worker = PrintWorker(
+        deps,
+        options_lookup=lambda j: (
+            True, 2, None, not_before_dt.isoformat(timespec="seconds"), False
+        ),
+    )
+
+    await worker.start()
+    await asyncio.sleep(0.05)
+    await worker.stop()
+
+    events = [r.event for r in log.replay()]
+    assert "retry" in events
+    assert "retry_timeout" not in events
 
 
 @pytest.mark.asyncio
@@ -272,22 +492,22 @@ def test_options_from_replay_rebuilds_persisted_options(state_dir):
     ))
 
     out = options_from_replay(log)
-    assert out["JOB-A"] == (False, 4, expires, False)
-    assert out["JOB-B"] == (True, 2, None, False)
+    assert out["JOB-A"] == (False, 4, expires, None, False)
+    assert out["JOB-B"] == (True, 2, None, None, False)
 
 
 def test_default_options_is_four_tuple_matching_unpack_arity(state_dir):
     """Codex P1 (#9): the in-memory ``options_store`` fallback MUST match
-    the worker's 4-tuple unpack ``(auto_cut, feed_lines_after,
-    expires_at_iso, trailing_cut)``. Pre-fix the production wiring fell
+    the worker's normalized unpack ``(auto_cut, feed_lines_after,
+    expires_at_iso, not_before_iso, trailing_cut)``. Pre-fix the production wiring fell
     back to a 3-tuple and triggered ``ValueError`` for any pending job
     skipped by ``options_from_replay`` (i.e. pre-v0.5.2 records). The
     helper exists so cli/main.py and the test fixture share one shape.
     """
-    assert len(DEFAULT_OPTIONS) == 4
-    auto_cut, feed_lines_after, expires_at, trailing_cut = DEFAULT_OPTIONS
+    assert len(DEFAULT_OPTIONS) == 5
+    auto_cut, feed_lines_after, expires_at, not_before, trailing_cut = DEFAULT_OPTIONS
     assert auto_cut is True and feed_lines_after == 2
-    assert expires_at is None and trailing_cut is False
+    assert expires_at is None and not_before is None and trailing_cut is False
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 
 **Owner:** Maintainer
 **Status:** Living implementation spec
-**Last updated:** 2026-05-09
+**Last updated:** 2026-07-02
 **Scope:** Printer-service substrate only. Sender composition logic (what gets printed, when, by whom) is explicitly out of scope and belongs in each sender's spec.
 
 ## 1. Vision
@@ -199,7 +199,19 @@ Response: `{ "blocks": [...], "renderer_version": "1.4.2", "changelog_url": "...
 
 Recent job log: `id`, `sender`, `document_type`, `queued_at`, `printed_at`, `status`, `paper_used_mm`, `renderer_version` (the renderer that produced the original output), `reprint_mode` (`"png_cached"` if the rendered PNG is still in the 7-day cache; `"json_rerender"` if it'll be re-rendered from stored JSON).
 
-Each entry exposes a `reprint_url` pointing to `POST /jobs/{id}/reprint`. By default reprint uses `png_cached` when available (byte-exact replay — for the "cat knocked the paper" case). Append `?force=json` to re-render from JSON at the **current** renderer version (useful when typography has improved since the original print and you want to see the new look). If the cached PNG is evicted between listing and reprint, the service falls back to JSON re-render; if both JSON and PNG are gone, it returns `410 Gone`.
+Each entry exposes a `reprint_url` pointing to `POST /jobs/{job_id}/reprint`. By default reprint uses `png_cached` when available (byte-exact replay — for the "cat knocked the paper" case). Append `?force=json` to re-render from JSON at the **current** renderer version (useful when typography has improved since the original print and you want to see the new look). If the cached PNG is evicted between listing and reprint, the service falls back to JSON re-render; if both JSON and PNG are gone, it returns `410 Gone`.
+
+### `GET /jobs/{job_id}`
+
+Returns the same job-entry shape as `GET /jobs?limit=20` for one job id. Unknown,
+evicted, or invalid job ids return `404`.
+
+### `POST /jobs/{job_id}/reprint`
+
+Queues a new job from the original artifacts. Cached PNG chunks are preferred
+for byte-identical replay; `?force=json` re-renders from stored JSON at the
+current renderer version. If neither path can reconstruct a printable job, the
+endpoint returns `410`.
 
 **Storage policy:**
 - **JSON document** kept long-term, ring-buffer eviction at 10k jobs or 100MB (whichever first).
@@ -208,6 +220,11 @@ Each entry exposes a `reprint_url` pointing to `POST /jobs/{id}/reprint`. By def
 - Both caps are tunable via service config.
 
 Disk-wear rule: acceptance writes the JSON job record and rendered PNG once, and terminal status writes once. Retry events are append-only JSONL records; log pruning drops oldest terminal-job history while preserving pending work.
+
+### `GET /metrics`
+
+Prometheus text metrics for queue depth, uptime, paper used, printed job count,
+failed job count, retry count, oldest pending age, and clock synchronization.
 
 ### `POST /test`
 
@@ -401,7 +418,7 @@ Receipt printers are physically capable of essentially unbounded length — pape
 - Default `max_length_mm: 2000` (2m) as a safety against runaway prints.
 - Senders can raise the cap to `null` (unlimited) explicitly when they mean it.
 - `/print` response includes `estimated_paper_mm` so senders know what they're committing to before paper is consumed.
-- A planned "preview mode" (`?dry_run=true`) returns the rendered PNG without printing, for testing long jobs.
+- The shipped preview mode (`?dry_run=true`) returns the rendered PNG without printing, for testing long jobs and typography changes.
 - Even with `max_length_mm: null`, service-level `max_rendered_height_px` and render-timeout guards remain in force unless deliberately raised in config.
 
 **Cut control:**
@@ -473,6 +490,9 @@ What gets printed, when, and from which sources is **explicitly out of scope for
 
 This spec ships in six phases. Sender integrations (OpenClaw briefing, agentic news, calendar API, iOS Shortcut) live on their own roadmap and depend on this service but ship out of band.
 
+As of 2026-07-02, all six phases below are shipped in the Pi service at
+`renderer_version` / package `__version__` `0.9.1`.
+
 **Phase 1 — Hardware bring-up + DPI calibration (this week)**
 - Receive printer, hold-FEED self-test, confirm USB enumeration on Pi
 - Bare `python-escpos` "hello world" via USB
@@ -503,12 +523,13 @@ This spec ships in six phases. Sender integrations (OpenClaw briefing, agentic n
 
 **Phase 5 — Creative blocks**
 - `large_text`, `pull_quote`, `drop_cap`, `ornament`, `tear_here`, `gradient_band`, `progress_bar`, `sparkline`, `barcode`, `ascii_art`, `bullets`, `numbered`, `table_compact`, `rich_text` (multi-run mixed emphasis)
+- Literary and correspondence blocks are shipped too: `epigraph`, `byline`, `dateline`, `salutation`, `signature`, `colophon`, `address`
 - Each block lands with a sample in the `/test` page so regressions show up on first physical print
 
-**Phase 6 — Nice-to-haves**
-- `?dry_run=true` preview mode (returns rendered PNG without printing, for testing long jobs and previewing typography changes)
-- Service config knobs for cache caps, retention thresholds
-- Operational metrics endpoint (queue depth time-series, paper-out frequency)
+**Phase 6 — Operational polish**
+- `?dry_run=true` preview mode is shipped on `POST /print` and `POST /print/raw`
+- Service config knobs for cache caps and retention thresholds are shipped
+- `/metrics` is shipped as a Prometheus text endpoint
 
 **Out of scope for this spec — sender integrations:**
 OpenClaw daily briefing, agentic news summarization, calendar API integration, iOS Shortcut, n8n flows. Each ships on its own timeline against this service's HTTP API. Their composition logic, schedules, and content rules belong in their own specs.
@@ -527,8 +548,9 @@ OpenClaw daily briefing, agentic news summarization, calendar API integration, i
                        ▼
 ┌──────────────────────────────────────────────────────────┐
 │ Layer 2: HTTP API (the contract — source of truth)       │
-│   POST /print, /print/raw, /jobs/{id}/reprint            │
-│   GET /healthz, /jobs, /schema; POST /test               │
+│   POST /print, /print/raw, /jobs/{job_id}/reprint        │
+│   GET /healthz, /jobs, /jobs/{job_id}, /metrics, /schema │
+│   POST /test                                             │
 └──────────────────────┬───────────────────────────────────┘
                        │
                        ▼
@@ -545,14 +567,14 @@ The HTTP API is the immovable contract. Everything else is a thin adapter. This 
 
 **MCP server is schema-derived.** On boot, it reads `GET /schema` from the running printer service and constructs its tool surface from current block types and their fields. This means: (1) Claude can never request a removed block type, since it isn't in the tool catalog; (2) new block types added to the renderer become callable from any agentic surface as soon as the MCP server restarts; (3) the MCP server has zero hand-maintained schema knowledge — the printer service is the single source of truth.
 
-## 14. Open questions
+## 14. Operating decisions
 
-The big architectural questions are resolved (see v0.3 decisions and v0.4 changes at the bottom of this doc). What remains is genuinely empirical — answers come from hardware or from real usage:
+The big architectural questions are resolved (see v0.3 decisions and v0.4 changes at the bottom of this doc). The remaining empirical questions have these recorded decisions:
 
-- **Atkinson dither parameters for vector display fonts at 2× → 1-bit.** Off-the-shelf Atkinson is the starting point; threshold offset and serpentine-vs-non may need tuning per font size. Decide by printing display samples in Phase 3 and picking by eye.
-- **Auth model on tailnet.** Currently zero auth — anything on the tailnet can hit `/print`. Acceptable for a single-user device, but if the tailnet ever has guest devices a shared bearer token (`X-Print-Token`) is the obvious minimal addition. Defer until a real reason to reach for it appears.
-- **PNG cache + JSON ring-buffer caps.** 100MB / 7 days / 10k jobs are reasonable defaults for a Pi Zero 2 W's SD card; revisit once real usage patterns show whether briefings/photos/banners dominate the disk budget and whether SD-card write volume needs lower caps.
-- **Decoded-image pixel cap.** `max_decoded_image_pixels` defaults to 10M pixels; revisit after real photo/banner usage on the target Pi.
+- **Auth model on tailnet.** Decision: stays deferred by decision. Rationale: the relay enforces the local allow-list plus per-friend rate limits before local submission, and the tailnet is single-user. Revisit trigger: any public ingress, such as a guest drop-box feature, or any non-personal tailnet.
+- **Atkinson dither parameters for vector display fonts at 2× → 1-bit.** Decision: closed. Rationale: the current pipeline is calibrated in practice and is now the contract. Revisit trigger: a new print head, font stack, or renderer pass visibly changes output quality.
+- **PNG cache + JSON ring-buffer caps.** Decision: current defaults are the contract: `png_cache_max_bytes = 100 * 1024 * 1024` (100 MiB), `png_cache_ttl_s = 7 * 24 * 3600` (7 days), `json_log_max_jobs = 10_000`, and `json_log_max_bytes = 100 * 1024 * 1024` (100 MiB). Rationale: these defaults fit the Pi Zero 2 W SD-card budget while keeping reprints useful. Revisit trigger: real usage shows photos/banners dominate disk, pending jobs are threatened, or SD-card write volume needs lower caps.
+- **Decoded-image pixel cap.** Decision: the enforced cap is `max_decoded_image_pixels = 10_000_000` for `/print` image blocks, `/print/raw`, and the relay raw-image path. Rationale: it bounds decode/render work before a hostile or accidental image can exhaust the Pi. Revisit trigger: legitimate photo/banner workflows repeatedly hit `413 max_decoded_image_pixels`, or a second device class changes memory headroom.
 
 ## v0.3 decisions (resolved from v0.2 open questions)
 
@@ -589,3 +611,150 @@ The big architectural questions are resolved (see v0.3 decisions and v0.4 change
 - At least three independent senders are in regular use within 8 weeks of Phase 4 (MCP server) going live.
 - An agent (not the maintainer) decides on its own to print something, correctly, within 3 months of the MCP server going live.
 - At least one print job exists *purely for delight* — a banner, a poem, a photo — independent of utility. The substrate has earned its place when the printer surprises its user.
+
+## 16. Printer Pals — friend network
+
+Printer Pals is the shipped friend-to-friend relay subsystem. It keeps the Pi as
+the local print authority while using a replaceable public hub for discovery,
+friend management, web console sessions, and queued delivery between printers.
+The hub stores and routes JSON print documents or raw PNG payloads; it never
+renders and never talks to a printer directly.
+
+### 16.1 Hub relay and status lifecycle
+
+Each printer registers with a handle and receives two long-lived token classes:
+a DEVICE token for receive-path calls (`/inbox`, `/jobs/{job_id}/ack`,
+`/jobs/{job_id}/status`, `/capabilities`, `/login-links`) and an API token for
+member actions (`/friends`, `/invites`, `/send`,
+`/friends/{handle}/schema`). The web console mints separate CONSOLE tokens via
+printed one-time login links so browser sessions do not reuse device or API
+tokens.
+
+The hub job lifecycle is: `queued` -> `leased` -> `delivered` -> terminal. A
+held `GET /inbox` long-poll leases the oldest queued job for that recipient.
+The relay persists its local mapping before `POST /jobs/{job_id}/ack`, then
+reports the local terminal outcome with `POST /jobs/{job_id}/status`.
+Undelivered queued jobs age out as `relay_expired`; expired leases return to
+`queued` for redelivery.
+
+The local-to-hub terminal mapping is the relay contract:
+
+```python
+_LOCAL_TO_HUB = {
+    "printed": "printed",
+    "expired": "printer_expired",
+    "retry_timeout": "printer_retry_timeout",
+    "unknown_partial": "printer_unknown_partial",
+}
+```
+
+`printer_lost` is separate from that mapping. It means the relay can no longer
+find the local job record before confirming its outcome; the job may or may not
+have printed. It is reportable by the relay, but it is not the same as the
+local `expired` event.
+
+### 16.2 Relay pipeline, local authority, and friend gates
+
+The relay runs on the Pi and is a client of two HTTP APIs: the public hub and
+the local printer service on `127.0.0.1`. A receive cycle runs maintenance first
+(`replay_unfinished`, `PUT /capabilities`, friend sync), then long-polls
+`GET /inbox`.
+
+For each inbox job, the relay applies these gates before local submission:
+
+1. Durable dedup by `hub_job_id` in the relay JobMap. A redelivered known job is
+   re-acked and re-reported, never reprinted.
+2. Local allow-list. The hub can say two handles are friends, but only local
+   state decides who may auto-print on this Pi.
+3. Per-friend rate limit. The default relay limit is 12 accepted jobs per hour
+   per friend; deterministic rejects do not consume a slot.
+4. Deterministic transform and local submission. Document jobs get a
+   deterministic `FROM <HANDLE> . HH:MM` paragraph prepended before `POST /print`.
+   Raw PNG jobs get a deterministic 576 px attribution band composited before
+   `POST /print/raw`.
+
+The local allow-list is mutated only by local actions: redeeming a hub invite,
+issuing an invite whose later redemption matches this Pi's locally stored
+`invite_id`, explicitly accepting a held friend, or syncing removal/metadata for
+already-trusted friends. Sync can remove and refresh; it cannot silently
+auto-add a non-matching friend.
+
+### 16.3 Durability, replay, and idempotency
+
+Relay state lives under `/var/lib/printer/relay` by default. Credentials,
+allow-list entries, pending invite ids, rate windows, and JobMap records are
+local files because the Pi must keep its safety decisions across restarts and
+power cuts.
+
+JobMap is append-only JSONL keyed by hub job id. The relay writes and fsyncs the
+mapping before acknowledging hub delivery. On restart, `replay_unfinished`
+checks local `/jobs/{job_id}` state and re-reports terminal outcomes. The hub
+accepts duplicate acks and duplicate same-status terminal reports so lost
+responses or relay crashes do not strand work at `delivered`.
+
+The relay submits friend jobs with `X-Sender: friend:<handle>` and
+`X-Idempotency-Key: <hub_job_id>`. This namespaces friend traffic away from
+local senders while letting the Pi's normal idempotency layer dedupe a bounded
+crash window between local acceptance and JobMap persistence.
+
+### 16.4 Presence, wakeups, and v1 scaling boundary
+
+A printer is online while one or more of its `/inbox` polls is active. Presence
+is reference-counted, not a plain set, because overlapping polls are normal
+during relay restarts or brief double-poller windows; the Friends view should
+only flip offline when the last active poll releases.
+
+Wakeups are process-local in v1. A `/send` commits queued jobs, then signals any
+held inbox waiters for the recipient. This single-instance design is deliberate
+for the current Railway deployment. The scale path is Postgres LISTEN/NOTIFY
+for cross-process wakeups; adopting that path must preserve the same route and
+relay contracts.
+
+### 16.5 Hub HTTP and web surface
+
+The hub-owned route inventory is:
+
+- `GET /healthz`
+- `POST /admin/invites`
+- `POST /register`
+- `GET /friends`
+- `POST /invites`
+- `GET /friends/{handle}/schema`
+- `PUT /capabilities`
+- `PUT /printers/me/alerts`
+- `POST /send`
+- `GET /inbox`
+- `POST /jobs/{job_id}/ack`
+- `POST /jobs/{job_id}/status`
+- `POST /login-links`
+- `GET /console/login`
+- `POST /console/logout`
+- `GET /`
+- `POST /friends/invite`
+- `POST /friends/{handle}/remove`
+- `GET /join`
+- `POST /join`
+- `GET /compose`
+- `POST /compose`
+- `GET /history`
+- `/static`
+
+FastAPI's generated `/openapi.json`, `/docs`, `/docs/oauth2-redirect`, and
+`/redoc` endpoints are framework documentation routes, not part of the
+Printer Pals contract.
+
+The console routes are a management convenience over the same primitives:
+friends, invites, compose/send, history, joining, and logout. The API routes
+remain the relay contract.
+
+### 16.6 Capability stance and deferred protocol commitments
+
+Recipients report their current `renderer_version`, full block schema, and
+block type list through `PUT /capabilities`; senders can fetch a friend's schema
+with `GET /friends/{handle}/schema` before sending. The v1 stance is matched
+hardware: 576 px print head, same renderer family, and no heterogeneous-printer
+capability negotiation until a real second device class exists.
+
+Beyond this documented route/payload behavior, there is no separately versioned
+relay-to-hub protocol commitment yet. Adding one is deferred until multiple hub
+or relay versions must interoperate in the wild.
