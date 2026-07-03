@@ -40,13 +40,14 @@ class JobRecord:
     detail: str | None = None  # human-readable on retry/expired/etc.
     # Per-job print options. Persisted on ``accepted`` so that a crash/restart
     # can rebuild the in-memory ``options_store`` and continue to honor
-    # ``auto_cut=False``, custom ``feed_lines_after``, and ``expires_at`` for
-    # jobs queued before the restart. Pre-v0.5.2 records have these set to
-    # None; the recovery helper skips them and the worker falls back to the
-    # ``(True, 2, None)`` default, matching pre-fix behavior.
+    # ``auto_cut=False``, custom ``feed_lines_after``, ``expires_at``, and
+    # ``not_before`` for jobs queued before the restart. Pre-v0.5.2 records
+    # have these set to None; the recovery helper skips them and the worker
+    # falls back to the default options, matching pre-fix behavior.
     auto_cut: bool | None = None
     feed_lines_after: int | None = None
     expires_at: str | None = None  # ISO 8601, may be naive (worker normalizes)
+    not_before: str | None = None  # ISO 8601, may be naive (worker normalizes)
     # Multi-chunk metadata (v0.6.0). ``chunk_count`` is the number of PNGs
     # cached under the chunked layout (``<job>__<i>.png``). ``trailing_cut``
     # is True when the document had at least one ``cut`` block with no
@@ -64,6 +65,7 @@ class JobRecord:
                  estimated_paper_mm: int, renderer_version: str,
                  auto_cut: bool = True, feed_lines_after: int = 2,
                  expires_at: str | None = None,
+                 not_before: str | None = None,
                  chunk_count: int = 1, trailing_cut: bool = False) -> JobRecord:
         return cls(event="accepted", job_id=job_id, ts=_now(), sender=sender,
                    document_type=document_type, idempotency_key=idempotency_key,
@@ -71,7 +73,7 @@ class JobRecord:
                    estimated_paper_mm=estimated_paper_mm,
                    renderer_version=renderer_version,
                    auto_cut=auto_cut, feed_lines_after=feed_lines_after,
-                   expires_at=expires_at,
+                   expires_at=expires_at, not_before=not_before,
                    chunk_count=chunk_count, trailing_cut=trailing_cut)
 
     @classmethod

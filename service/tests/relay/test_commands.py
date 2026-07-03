@@ -7,7 +7,7 @@ from printer.relay.commands import (
     hub_status,
 )
 from printer.relay.ratelimit import PerFriendRateLimiter
-from printer.relay.store import AllowList, CredsStore, InviteStore, JobMap
+from printer.relay.store import AllowList, CommandInbox, CredsStore, InviteStore, JobMap
 
 
 async def test_hub_join_stores_creds_and_pins_inviter(relay_paths, hub_http):
@@ -66,13 +66,11 @@ async def test_hub_login_link_requires_joined(relay_paths, hub_http, fake_deps):
             await hub_login_link(relay_paths, hub_http, local_ac)
 
 
-def test_hub_friends_accept_adds_held_friend(relay_paths):
-    # Re-instantiate AllowList per assertion: the store snapshots the file into
-    # memory at construction, so a fresh read after the mutation is what
-    # exercises the on-disk add (and matches how every other caller reads it).
+def test_hub_friends_accept_queues_held_friend(relay_paths):
     assert AllowList(relay_paths.allowlist_path).contains("carol") is False
     hub_friends_accept(relay_paths, "carol")
-    assert AllowList(relay_paths.allowlist_path).contains("carol") is True
+    assert AllowList(relay_paths.allowlist_path).contains("carol") is False
+    assert CommandInbox(relay_paths.commands_path).drain()[0]["handle"] == "carol"
 
 
 def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
@@ -84,11 +82,19 @@ def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
                                               renderer_version=None)
     InviteStore(relay_paths.invites_path).record("inv_1")
     JobMap(relay_paths.jobmap_path).put("hj1", local_job_id="loc1", last_status="delivered")
+    CommandInbox(relay_paths.commands_path).append({"op": "accept", "handle": "bob", "ts": "now"})
     rate_path = relay_paths.root / "rate.json"
     PerFriendRateLimiter(rate_path, per_hour=1).record_accepted(
         "alice", "hj-leave", "2026-06-03T14:00:00+00:00"
     )
     assert rate_path.exists()
+    # A crash mid-drain (before ack()) can leave this recovery snapshot behind;
+    # hub_leave must clear it too, or joining a different hub later replays a
+    # stale command from this membership into the fresh allow-list.
+    draining_snapshot = relay_paths.commands_path.with_name(
+        f"{relay_paths.commands_path.name}.draining"
+    )
+    draining_snapshot.write_text('{"op": "accept", "handle": "stale"}\n')
 
     hub_leave(relay_paths)
 
@@ -96,7 +102,9 @@ def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
     assert AllowList(relay_paths.allowlist_path).contains("alice") is False
     assert InviteStore(relay_paths.invites_path).has("inv_1") is False
     assert JobMap(relay_paths.jobmap_path).get("hj1") is None
+    assert CommandInbox(relay_paths.commands_path).drain() == []
     assert not rate_path.exists()
+    assert not draining_snapshot.exists()
 
 
 def test_hub_status_reports_joined_state(relay_paths):

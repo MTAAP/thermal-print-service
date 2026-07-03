@@ -59,6 +59,28 @@ async def test_print_max_length_mm_enforced(fake_deps):
 
 
 @pytest.mark.asyncio
+async def test_print_rejects_expires_at_not_after_not_before(fake_deps):
+    app = create_app(fake_deps)
+    body = json.dumps({
+        "options": {
+            "not_before": "2026-07-02T08:00:00Z",
+            "expires_at": "2026-07-02T08:00:00Z",
+        },
+        "blocks": [{"type": "paragraph", "text": "too narrow a window"}],
+    }).encode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print", content=body,
+                          headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+    err = r.json()["errors"][0]
+    assert err["field"].startswith("options")
+    assert "expires_at" in err["message"]
+    assert "not_before" in err["message"]
+    assert err["valid_values"] is None
+    assert err["migration_hint"] is None
+
+
+@pytest.mark.asyncio
 async def test_print_idempotency_duplicate_skips_render(fake_deps, monkeypatch):
     calls = {"render": 0}
 

@@ -42,6 +42,31 @@ def test_print_document_input_schema_includes_idempotency_key():
     assert wrapped["required"] == ["document"]
 
 
+def test_print_document_input_schema_exposes_not_before_option():
+    doc_schema = {
+        "type": "object",
+        "properties": {
+            "options": {
+                "type": "object",
+                "properties": {
+                    "not_before": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Hold until options.not_before.",
+                    }
+                },
+            }
+        },
+    }
+    wrapped = build_print_document_input_schema(doc_schema)
+    prop = (
+        wrapped["properties"]["document"]["properties"]["options"]
+        ["properties"]["not_before"]
+    )
+    assert prop["format"] == "date-time"
+    assert "not_before" in prop["description"]
+
+
 def test_print_image_input_schema_requires_png_base64():
     s = build_print_image_input_schema()
     assert s["required"] == ["png_base64"]
@@ -61,6 +86,7 @@ def test_list_tools_returns_expected_set(cfg, sample_schema_payload):
     names = {t.name for t in tools}
     assert names == {
         "print_document",
+        "preview_document",
         "print_image",
         "get_status",
         "list_recent_jobs",
@@ -91,6 +117,23 @@ def test_list_tools_print_document_uses_live_schema(cfg, sample_schema_payload):
     assert "header" in pd.description
     # Input schema must be the dynamic Document schema, not a fallback.
     assert pd.inputSchema["properties"]["document"]["title"] == "Document"
+    assert "not_before" in pd.description
+
+
+def test_list_tools_preview_document_uses_live_document_schema(cfg, sample_schema_payload):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        return httpx.Response(404)
+
+    server, cache, _, _ = build_with_handler(cfg, handler)
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    tools = list_tools(server)
+    preview = next(t for t in tools if t.name == "preview_document")
+    assert preview.inputSchema == build_print_document_input_schema(sample_schema_payload["blocks"])
+    assert "without printing" in preview.description
+    assert "send_to_friend" in preview.description
 
 
 def test_list_tools_in_fallback_mode_attempts_refresh_then_uses_fallback_schema(cfg):
@@ -149,13 +192,65 @@ def test_call_print_document_forwards_payload_and_returns_202(cfg, sample_schema
     content = call_tool(
         server,
         "print_document",
-        {"document": {"blocks": [{"type": "header", "text": "hi"}]}, "idempotency_key": "k1"},
+        {
+            "document": {
+                "options": {"not_before": "2099-01-01T00:00:00Z"},
+                "blocks": [{"type": "header", "text": "hi"}],
+            },
+            "idempotency_key": "k1",
+        },
     )
     payload = json.loads(content[0].text)
     assert payload["ok"] is True
     assert payload["result"]["id"] == "01J"
     assert seen["body"]["blocks"][0]["text"] == "hi"
+    assert seen["body"]["options"]["not_before"] == "2099-01-01T00:00:00Z"
     assert seen["idem"] == "k1"
+
+
+def test_call_preview_document_returns_png_image_and_summary(cfg, sample_schema_payload):
+    raw_png = b"\x89PNG\r\n\x1a\nPREVIEW"
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        if request.url.path == "/print":
+            seen["body"] = json.loads(request.content.decode())
+            seen["query"] = dict(request.url.params)
+            seen["idem"] = request.headers.get("x-idempotency-key")
+            return httpx.Response(
+                200,
+                content=raw_png,
+                headers={
+                    "Content-Type": "image/png",
+                    "X-Estimated-Paper-Mm": "42",
+                    "X-Chunk-Count": "3",
+                    "X-Renderer-Version": "1.4.2",
+                },
+            )
+        return httpx.Response(404)
+
+    server, cache, _, _ = build_with_handler(cfg, handler)
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    content = call_tool(
+        server,
+        "preview_document",
+        {"document": {"blocks": [{"type": "header", "text": "hi"}]}, "idempotency_key": "k1"},
+    )
+
+    assert seen["body"]["blocks"][0]["text"] == "hi"
+    assert seen["query"] == {"dry_run": "true"}
+    assert seen["idem"] == "k1"
+    image = next(item for item in content if item.type == "image")
+    assert image.mimeType == "image/png"
+    assert base64.b64decode(image.data) == raw_png
+    summary = next(item for item in content if item.type == "text")
+    assert "estimated_paper_mm" in summary.text
+    assert "42" in summary.text
+    assert "chunk_count" in summary.text
+    assert "1.4.2" in summary.text
 
 
 def test_call_print_document_surfaces_400_with_structured_body(cfg, sample_schema_payload):
@@ -187,6 +282,57 @@ def test_call_print_document_surfaces_400_with_structured_body(cfg, sample_schem
     assert payload["ok"] is False
     assert payload["status"] == 400
     assert payload["details"]["errors"][0]["valid_values"] == ["header", "paragraph"]
+
+
+def test_call_preview_document_surfaces_400_with_structured_body(cfg, sample_schema_payload):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        return httpx.Response(
+            400,
+            json={
+                "errors": [
+                    {
+                        "block_index": 0,
+                        "field": "type",
+                        "message": "unknown block type 'spinner'",
+                        "valid_values": ["header", "paragraph"],
+                        "migration_hint": "Use paragraph for spinner text.",
+                    }
+                ]
+            },
+        )
+
+    server, cache, _, _ = build_with_handler(cfg, handler)
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    content = call_tool(server, "preview_document", {"document": {"blocks": []}})
+    assert all(item.type != "image" for item in content)
+    payload = json.loads(content[0].text)
+    assert payload["ok"] is False
+    assert payload["status"] == 400
+    error = payload["details"]["errors"][0]
+    assert error["valid_values"] == ["header", "paragraph"]
+    assert error["migration_hint"] == "Use paragraph for spinner text."
+
+
+def test_call_preview_document_service_unreachable_matches_standard_error(
+    cfg, sample_schema_payload
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/schema":
+            return httpx.Response(200, json=sample_schema_payload)
+        raise httpx.ConnectError("connection refused", request=request)
+
+    server, cache, _, _ = build_with_handler(cfg, handler)
+    asyncio.run(cache.boot(retry_budget_s=0.5))
+
+    content = call_tool(server, "preview_document", {"document": {"blocks": []}})
+    assert all(item.type != "image" for item in content)
+    payload = json.loads(content[0].text)
+    assert payload["ok"] is False
+    assert payload["status"] == 0
+    assert "could not reach print service" in payload["error"]
 
 
 def test_call_print_image_decodes_base64_and_posts_bytes(cfg, sample_schema_payload):

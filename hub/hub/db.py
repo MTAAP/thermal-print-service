@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -21,6 +24,8 @@ class Base(DeclarativeBase):
 # future platform change) can append ?sslmode=require, which would crash
 # create_async_engine on the first connection rather than loudly at config time.
 _ASYNC_INCOMPATIBLE_QUERY = {"sslmode", "channel_binding"}
+_BASELINE_REVISION = "0001_initial"
+_HEAD_REVISION = "head"
 
 
 def _normalize_async_url(url: str) -> str:
@@ -59,11 +64,40 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def init_models(engine: AsyncEngine) -> None:
-    # v1: create_all; Alembic introduced at the first post-launch schema change.
-    import hub.models  # noqa: F401  (register mappers before create_all)
+    import hub.models  # noqa: F401  (register mappers before migrations)
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    async with engine.connect() as conn:
+        await conn.run_sync(_upgrade_schema)
+
+
+def _alembic_config() -> Config:
+    cfg = Config()
+    cfg.set_main_option("script_location", "hub:alembic")
+    cfg.set_main_option("prepend_sys_path", ".")
+    cfg.set_main_option("path_separator", "os")
+    return cfg
+
+
+def _upgrade_schema(connection) -> None:
+    cfg = _alembic_config()
+    cfg.attributes["connection"] = connection
+    inspector = inspect(connection)
+    tables = set(inspector.get_table_names())
+    has_recorded_version = False
+    if "alembic_version" in tables:
+        has_recorded_version = (
+            connection.execute(text("select 1 from alembic_version limit 1")).first()
+            is not None
+        )
+
+    if not has_recorded_version and "printers" in tables:
+        printer_columns = {col["name"] for col in inspector.get_columns("printers")}
+        revision = _HEAD_REVISION if "alert_ntfy_topic" in printer_columns else _BASELINE_REVISION
+        command.stamp(cfg, revision)
+
+    command.upgrade(cfg, _HEAD_REVISION)
+    if connection.in_transaction():
+        connection.commit()
 
 
 async def session_scope(

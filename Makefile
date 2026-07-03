@@ -1,9 +1,10 @@
-.PHONY: verify verify-all test test-all lint typecheck core-test core-lint core-typecheck service-test mcp-test service-lint mcp-lint service-typecheck mcp-typecheck design-test design-test-all design-lint design-typecheck hub-test hub-lint hub-typecheck
+.PHONY: verify verify-all test test-all lint typecheck core-test core-lint core-typecheck service-test mcp-test service-lint mcp-lint service-typecheck mcp-typecheck design-test design-test-all design-lint design-typecheck hub-test hub-lint hub-typecheck deploy-hub
 
 CORE_PY ?= printer-core/.venv/bin/python
 SERVICE_PY ?= service/.venv/bin/python
 MCP_PY ?= mcp-server/.venv/bin/python
 DESIGN_PY ?= design/.venv/bin/python
+PYTHON ?= python3
 # The hub package and its project dir share the name `hub`, so the project dir
 # shadows the installed package on sys.path from the repo root. Run all hub
 # Python from inside hub/ (CWD=hub) so `import hub` resolves to the package.
@@ -61,6 +62,43 @@ hub-lint:
 
 hub-typecheck:
 	cd hub && $(HUB_PY) -m mypy hub
+
+deploy-hub:
+	@if [ -z "$${HUB_URL:-}" ]; then \
+		echo "ERROR: HUB_URL is required, for example HUB_URL=https://hub.example.invalid make deploy-hub" >&2; \
+		exit 2; \
+	fi
+	@set -eu; \
+	sha="$$(git rev-parse HEAD)"; \
+	printf '%s\n' "$$sha" > hub/build_info.txt; \
+	echo "==> wrote hub/build_info.txt for $$sha"; \
+	echo "==> railway up --ci (hub/)"; \
+	(cd hub && railway up --ci); \
+	echo "==> waiting for $${HUB_URL%/}/healthz to report git_sha=$$sha"; \
+	deadline="$$(($$(date +%s) + 300))"; \
+	while :; do \
+		payload="$$(curl -fsS "$${HUB_URL%/}/healthz" 2>/dev/null || true)"; \
+		remote_sha="$$(printf '%s' "$$payload" | $(PYTHON) -c 'import json, sys; print(json.load(sys.stdin).get("git_sha", ""))' 2>/dev/null || true)"; \
+		if [ "$$remote_sha" = "$$sha" ]; then \
+			echo "==> hub is live at $$sha"; \
+			exit 0; \
+		fi; \
+		if [ "$$(date +%s)" -ge "$$deadline" ]; then \
+			echo "ERROR: timed out waiting for $${HUB_URL%/}/healthz to report git_sha=$$sha" >&2; \
+			if [ -n "$$remote_sha" ]; then \
+				echo "ERROR: last reported git_sha=$$remote_sha" >&2; \
+			else \
+				echo "ERROR: healthz did not return a parseable git_sha" >&2; \
+			fi; \
+			exit 1; \
+		fi; \
+		if [ -n "$$remote_sha" ]; then \
+			echo "==> waiting: remote git_sha=$$remote_sha, want $$sha"; \
+		else \
+			echo "==> waiting: healthz not ready or missing git_sha"; \
+		fi; \
+		sleep 5; \
+	done
 
 design-test:
 	$(DESIGN_PY) -m pytest design/tests -m "not slow"

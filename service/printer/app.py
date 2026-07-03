@@ -332,9 +332,12 @@ def create_app(deps: AppDeps) -> FastAPI:
         expires_at_iso = (
             doc.options.expires_at.isoformat() if doc.options.expires_at else None
         )
+        not_before_iso = (
+            doc.options.not_before.isoformat() if doc.options.not_before else None
+        )
         deps.options_store[job_id] = (
             doc.options.auto_cut, doc.options.feed_lines_after, expires_at_iso,
-            trailing_cut,
+            not_before_iso, trailing_cut,
         )
         deps.joblog.append(JobRecord.accepted(
             job_id=job_id, sender=sender,
@@ -346,6 +349,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             auto_cut=doc.options.auto_cut,
             feed_lines_after=doc.options.feed_lines_after,
             expires_at=expires_at_iso,
+            not_before=not_before_iso,
             chunk_count=len(chunk_pngs),
             trailing_cut=trailing_cut,
         ))
@@ -371,15 +375,22 @@ def create_app(deps: AppDeps) -> FastAPI:
 
     def _build_job_entry(jid: str, a: dict, t: dict) -> dict:
         cached = deps.png_cache.get_chunks(jid) is not None
+        terminal = t.get("event") in (
+            "printed", "expired", "retry_timeout", "unknown_partial",
+        )
+        held = False if terminal else deps.worker.is_held(jid)
+        status = "held" if held and not t.get("event") else (t.get("event") or "queued")
         return {
             "id": jid,
             "sender": a.get("sender"),
             "document_type": a.get("document_type"),
             "queued_at": a.get("ts"),
             "printed_at": t.get("ts") if t.get("event") == "printed" else None,
-            "status": t.get("event") or "queued",
+            "status": status,
             "paper_used_mm": t.get("paper_used_mm"),
             "renderer_version": a.get("renderer_version"),
+            "not_before": a.get("not_before"),
+            "held": held,
             "reprint_mode": "png_cached" if cached else "json_rerender",
             "reprint_url": f"/jobs/{jid}/reprint",
         }
@@ -532,9 +543,12 @@ def create_app(deps: AppDeps) -> FastAPI:
         expires_at_iso = (
             doc.options.expires_at.isoformat() if doc.options.expires_at else None
         )
+        not_before_iso = (
+            doc.options.not_before.isoformat() if doc.options.not_before else None
+        )
         deps.options_store[new_id] = (
             doc.options.auto_cut, doc.options.feed_lines_after, expires_at_iso,
-            trailing_cut,
+            not_before_iso, trailing_cut,
         )
         deps.joblog.append(JobRecord.accepted(
             job_id=new_id, sender="reprint",
@@ -546,6 +560,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             auto_cut=doc.options.auto_cut,
             feed_lines_after=doc.options.feed_lines_after,
             expires_at=expires_at_iso,
+            not_before=not_before_iso,
             chunk_count=len(chunk_pngs),
             trailing_cut=trailing_cut,
         ))
@@ -595,7 +610,7 @@ def create_app(deps: AppDeps) -> FastAPI:
         estimated_mm = int(px_to_mm(chunks_paper_px))
         deps.png_cache.put_chunks(new_id, chunk_pngs)
         deps.paths.job_json_path(new_id).write_bytes(sample)
-        deps.options_store[new_id] = (True, 2, None, trailing_cut)
+        deps.options_store[new_id] = (True, 2, None, None, trailing_cut)
         deps.joblog.append(JobRecord.accepted(
             job_id=new_id, sender="test-endpoint",
             document_type=doc.document_type or "test",
@@ -603,7 +618,7 @@ def create_app(deps: AppDeps) -> FastAPI:
             kind="document",
             estimated_paper_mm=estimated_mm,
             renderer_version=RENDERER_VERSION,
-            auto_cut=True, feed_lines_after=2, expires_at=None,
+            auto_cut=True, feed_lines_after=2, expires_at=None, not_before=None,
             chunk_count=len(chunk_pngs), trailing_cut=trailing_cut,
         ))
         await deps.worker.enqueue(new_id)
@@ -666,15 +681,16 @@ async def _commit_raw(job_id: str, png_bytes: bytes, *,
         "kind": "raw", "document_type": document_type, "sender": sender,
         "options": {"auto_cut": True, "feed_lines_after": 2,
                     "preserve_paper": False,
-                    "max_length_mm": MAX_LENGTH_MM_DEFAULT, "expires_at": None},
+                    "max_length_mm": MAX_LENGTH_MM_DEFAULT,
+                    "not_before": None, "expires_at": None},
     }))
-    deps.options_store[job_id] = (True, 2, None, False)
+    deps.options_store[job_id] = (True, 2, None, None, False)
     deps.joblog.append(JobRecord.accepted(
         job_id=job_id, sender=sender, document_type=document_type,
         idempotency_key=idempotency_key, payload_hash=_hash_payload(png_bytes),
         kind="raw", estimated_paper_mm=estimated_mm,
         renderer_version=RENDERER_VERSION,
-        auto_cut=True, feed_lines_after=2, expires_at=None,
+        auto_cut=True, feed_lines_after=2, expires_at=None, not_before=None,
         chunk_count=1, trailing_cut=False,
     ))
     await deps.worker.enqueue(job_id)
@@ -695,16 +711,17 @@ async def _commit_chunks(job_id: str, chunk_pngs: list[bytes], *,
         "kind": "raw", "document_type": document_type, "sender": sender,
         "options": {"auto_cut": True, "feed_lines_after": 2,
                     "preserve_paper": False,
-                    "max_length_mm": MAX_LENGTH_MM_DEFAULT, "expires_at": None},
+                    "max_length_mm": MAX_LENGTH_MM_DEFAULT,
+                    "not_before": None, "expires_at": None},
     }))
-    deps.options_store[job_id] = (True, 2, None, False)
+    deps.options_store[job_id] = (True, 2, None, None, False)
     deps.joblog.append(JobRecord.accepted(
         job_id=job_id, sender=sender, document_type=document_type,
         idempotency_key=idempotency_key,
         payload_hash=_hash_payload(b"".join(chunk_pngs)),
         kind="raw", estimated_paper_mm=estimated_mm,
         renderer_version=RENDERER_VERSION,
-        auto_cut=True, feed_lines_after=2, expires_at=None,
+        auto_cut=True, feed_lines_after=2, expires_at=None, not_before=None,
         chunk_count=len(chunk_pngs), trailing_cut=False,
     ))
     await deps.worker.enqueue(job_id)

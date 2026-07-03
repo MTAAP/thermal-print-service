@@ -17,7 +17,7 @@ class SyncResult:
 def sync_friends(
     friends: list[dict[str, Any]], *, allowlist: AllowList, invites: InviteStore
 ) -> SyncResult:
-    """Reconcile the hub's friend list against the LOCAL allow-list (spec 5).
+    """Reconcile the hub's friend list against the LOCAL allow-list (spec §16.2).
 
     Authority is local: we auto-add ONLY friends matching a locally-recorded
     invite; everything else is held. We remove (unfriend) and refresh metadata,

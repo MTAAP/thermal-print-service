@@ -14,12 +14,12 @@ from printer.relay.hub_client import HubClient
 from printer.relay.local_client import LocalClient, SubmitOutcome, SubmitResult
 from printer.relay.paths import RelayPaths
 from printer.relay.ratelimit import PerFriendRateLimiter
-from printer.relay.store import AllowList, CredsStore, InviteStore, JobMap
+from printer.relay.store import AllowList, CommandInbox, CredsStore, InviteStore, JobMap
 from printer.relay.sync import sync_friends
 
 logger = logging.getLogger("printer.relay")
 
-# Local job statuses -> hub terminal statuses (spec 8.1 mapping table).
+# Local job statuses -> hub terminal statuses (spec §16.1 mapping table).
 _LOCAL_TO_HUB = {
     "printed": "printed",
     "expired": "printer_expired",
@@ -54,6 +54,8 @@ class RelayClient:
         self._hub = hub
         self._local = local
         self._allowlist = AllowList(paths.allowlist_path)
+        self._commands = CommandInbox(paths.commands_path)
+        self.drain_commands_once()
         self._ratelimit = PerFriendRateLimiter(paths.rate_path,
                                                per_hour=config.per_friend_rate_per_hour)
         self._jobmap = JobMap(paths.jobmap_path)
@@ -64,7 +66,7 @@ class RelayClient:
         # report. The done-callback discards each task once it completes.
         self._watch_tasks: set[asyncio.Task[None]] = set()
 
-    # ----- per-job pipeline (spec 7.1-7.3) -----
+    # ----- per-job pipeline (spec §16.2-§16.3) -----
 
     async def process_job(self, job: dict[str, Any]) -> None:
         assert self._hub is not None and self._local is not None
@@ -322,6 +324,29 @@ class RelayClient:
 
     # ----- friend sync (spec 5) -----
 
+    def drain_commands_once(self) -> None:
+        """Apply queued local commands through this relay's in-memory stores.
+
+        This keeps allowlist.json single-writer even when a short-lived CLI runs
+        while the relay is up: the CLI appends intent, and the relay mutates and
+        flushes its own AllowList instance before any friend-sync refresh can
+        rewrite the file.
+        """
+        for op in self._commands.drain():
+            op_name = op.get("op")
+            if op_name == "accept":
+                handle = op.get("handle")
+                if not isinstance(handle, str) or not handle:
+                    logger.warning("relay: invalid accept command skipped: %r", op)
+                    continue
+                self._allowlist.add(handle, display_name=handle, renderer_version=None)
+                continue
+            logger.warning("relay: unknown command op skipped: %r", op_name)
+        # Only delete the drain snapshot once every op above has been applied
+        # and flushed to allowlist.json -- a crash before this point leaves the
+        # snapshot in place so the next drain_commands_once() replays it.
+        self._commands.ack()
+
     async def sync_friends_once(self) -> None:
         """Pull the hub's friend list and reconcile it against the local
         allow-list (spec 5 inviter-side auto-add + unfriend removal).
@@ -452,6 +477,7 @@ class RelayClient:
         # stranded at 'delivered' forever); (2) friend sync wires the §5
         # inviter-side auto-add into the runtime; (3) capabilities re-report on a
         # renderer-version change.
+        self.drain_commands_once()
         await self.replay_unfinished()
         await self.report_capabilities_if_changed()
         await self.sync_friends_once()

@@ -25,6 +25,22 @@ async def test_dry_run_returns_png_no_print(fake_deps):
 
 
 @pytest.mark.asyncio
+async def test_dry_run_ignores_future_not_before(fake_deps):
+    app = create_app(fake_deps)
+    body = json.dumps({
+        "options": {"not_before": "2099-01-01T00:00:00Z"},
+        "blocks": [{"type": "paragraph", "text": "preview now"}],
+    }).encode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print?dry_run=true", content=body,
+                          headers={"Content-Type": "application/json"})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "image/png"
+        listing = await ac.get("/jobs")
+        assert listing.json()["jobs"] == []
+
+
+@pytest.mark.asyncio
 async def test_dry_run_print_raw_returns_input_png_no_print(fake_deps):
     import io
 

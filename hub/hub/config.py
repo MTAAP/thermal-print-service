@@ -2,6 +2,29 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+BUILD_INFO_PATH = Path(__file__).resolve().parents[1] / "build_info.txt"
+
+
+@lru_cache(maxsize=1)
+def build_git_sha() -> str:
+    env_path = os.environ.get("HUB_BUILD_INFO_PATH")
+    candidates = [Path(env_path)] if env_path else []
+    candidates.append(BUILD_INFO_PATH)
+    cwd_path = Path.cwd() / BUILD_INFO_PATH.name
+    if cwd_path not in candidates:
+        candidates.append(cwd_path)
+
+    for path in candidates:
+        try:
+            git_sha = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if git_sha:
+            return git_sha
+    return "unknown"
 
 
 @dataclass(frozen=True)
@@ -33,6 +56,9 @@ class HubConfig:
     session_secret: str = "dev-insecure-session-secret"
     # One-time console login link lifetime (short — it is a bearer-equivalent).
     login_link_ttl_s: int = 600
+    # Alert only after the relay has been silent well beyond the normal
+    # Tailscale relay-blip recovery window.
+    offline_alert_after_s: int = 300
     # Public base URL of the hub (scheme + host). The single source of truth for
     # building console login URLs that get printed/shared. The default is a loud
     # placeholder so an unconfigured deploy yields obviously-broken links rather
@@ -65,6 +91,9 @@ class HubConfig:
             ),
             session_secret=e.get("HUB_SESSION_SECRET", cls.session_secret),
             login_link_ttl_s=int(e.get("HUB_LOGIN_LINK_TTL_S", cls.login_link_ttl_s)),
+            offline_alert_after_s=int(
+                e.get("HUB_OFFLINE_ALERT_AFTER_S", cls.offline_alert_after_s)
+            ),
             public_url=e.get("HUB_PUBLIC_URL", cls.public_url),
             session_https_only=(
                 e.get("HUB_SESSION_HTTPS_ONLY", "true").strip().lower()

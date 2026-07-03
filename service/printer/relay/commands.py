@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import secrets
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -9,7 +10,7 @@ import httpx
 from printer.relay.hub_client import HubClient, register
 from printer.relay.local_client import LocalClient, SubmitOutcome
 from printer.relay.paths import RelayPaths
-from printer.relay.store import AllowList, CredsStore, InviteStore
+from printer.relay.store import AllowList, CommandInbox, CredsStore, InviteStore
 
 
 async def hub_join(
@@ -25,7 +26,8 @@ async def hub_join(
     })
     inviter = reg.get("inviter_handle")
     if inviter:
-        AllowList(paths.allowlist_path).add(
+        allowlist_path = paths.allowlist_path
+        AllowList(allowlist_path).add(
             inviter, display_name=inviter, renderer_version=None
         )
     return reg
@@ -84,15 +86,29 @@ async def hub_login_link(
 
 
 def hub_friends_accept(paths: RelayPaths, handle: str) -> None:
-    """Manually add a HELD friend to the local allow-list (explicit local
-    action — the only way a non-invite-matched friend ever auto-prints)."""
-    AllowList(paths.allowlist_path).add(handle, display_name=handle, renderer_version=None)
+    """Queue a HELD-friend accept for the relay to apply as the sole writer.
+
+    A direct CLI AllowList write races the running relay's in-memory copy: the
+    relay can later flush stale state and clobber the accept. Queueing preserves
+    the explicit local action while keeping allowlist.json mutations in-process.
+    """
+    CommandInbox(paths.commands_path).append({
+        "op": "accept",
+        "handle": handle,
+        "ts": datetime.now(UTC).isoformat(),
+    })
 
 
 def hub_leave(paths: RelayPaths) -> None:
+    commands_path = paths.commands_path
     for path in (
         paths.creds_path,
         paths.allowlist_path,
+        commands_path,
+        # CommandInbox.drain() can leave this recovery snapshot behind after a
+        # crash; without clearing it here, joining a different hub would replay
+        # a stale "accept" from the previous membership into the fresh allow-list.
+        commands_path.with_name(f"{commands_path.name}.draining"),
         paths.invites_path,
         paths.jobmap_path,
         paths.rate_path,
@@ -105,7 +121,8 @@ def hub_status(paths: RelayPaths) -> dict[str, Any]:
     creds = CredsStore(paths.creds_path).load()
     if creds is None:
         return {"joined": False}
-    al = AllowList(paths.allowlist_path)
+    allowlist_path = paths.allowlist_path
+    al = AllowList(allowlist_path)
     return {
         "joined": True, "handle": creds["handle"], "hub_url": creds["hub_url"],
         "allowlisted_friends": al.handles(),

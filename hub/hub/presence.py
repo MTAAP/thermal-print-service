@@ -12,7 +12,7 @@ class Presence:
     Friends view to "offline". Ref-counting fixes that: presence only clears when
     the LAST active poll for a printer releases.
 
-    Single-event-loop only (v1, spec §8.3/§8.4): increments/decrements are not
+    Single-event-loop only (v1, spec §16.4): increments/decrements are not
     guarded by a lock because there is no await between read and write here, so a
     single asyncio loop never interleaves them.
     """

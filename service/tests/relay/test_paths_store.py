@@ -41,6 +41,7 @@ def test_relay_paths_layout(tmp_path):
     paths.ensure()
     assert paths.creds_path == tmp_path / "creds.json"
     assert paths.allowlist_path == tmp_path / "allowlist.json"
+    assert paths.commands_path == tmp_path / "commands.jsonl"
     assert paths.invites_path == tmp_path / "invites.json"
     assert paths.jobmap_path == tmp_path / "jobmap.jsonl"
     assert tmp_path.is_dir()

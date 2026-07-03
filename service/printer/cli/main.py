@@ -230,7 +230,10 @@ def cmd_hub(args: argparse.Namespace) -> int:
 
     if args.hub_cmd == "friends":  # `hub friends accept <handle>`
         commands.hub_friends_accept(paths, args.handle)
-        print(f"allow-listed {args.handle}")
+        print(
+            f"queued accept for {args.handle}; applies within one relay poll cycle "
+            "or at next relay start"
+        )
         return 0
 
     print("usage: printer-svc hub {join|invite new|login-link|status|leave|friends accept}",

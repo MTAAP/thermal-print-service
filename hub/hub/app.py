@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 
+from hub.alerts import send_ntfy, sweep_offline_alerts
 from hub.config import HubConfig
 from hub.db import init_models, make_engine, make_sessionmaker
 from hub.jobs.lease import sweep
@@ -48,6 +49,13 @@ def create_app(deps: AppDeps, *, run_sweeper: bool = True) -> FastAPI:
                     try:
                         async with deps.sessionmaker() as s:
                             await sweep(s, job_ttl_s=deps.config.job_ttl_s)
+                            await sweep_offline_alerts(
+                                s,
+                                online=deps.online,
+                                alert_after_s=deps.config.offline_alert_after_s,
+                                state=deps.alerts,
+                                send=deps.alert_sender or send_ntfy,
+                            )
                     except Exception:
                         # A transient DB error (Railway Postgres deploy rollover /
                         # idle-connection recycling) must NOT kill lease reclamation

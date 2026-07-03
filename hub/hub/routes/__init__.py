@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from hub.alerts import OfflineAlertState
 from hub.config import HubConfig
 from hub.jobs.wakeup import WakeupRegistry
 from hub.presence import Presence
+
+AlertSender = Callable[[str, str], Awaitable[None]]
 
 
 @dataclass
@@ -15,6 +19,8 @@ class AppDeps:
     sessionmaker: async_sessionmaker[AsyncSession]
     wake: WakeupRegistry
     online: Presence  # ref-counted /inbox-poll presence per printer id
+    alerts: OfflineAlertState = field(default_factory=OfflineAlertState)
+    alert_sender: AlertSender | None = None
     # The engine is carried so the lifespan can run init_models on the server's
     # event loop (prod). Tests build deps without it and create tables in their
     # own fixture, so it defaults to None.

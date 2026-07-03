@@ -7,7 +7,7 @@ dependencies = [
   "playwright>=1.49",
   "Pillow>=11.0",
   "httpx>=0.27",
-  "printer-core",  # editable sibling: pip install -e ../printer-core (not on PyPI)
+  "thermal-printer-core",  # editable sibling: pip install -e ../printer-core; avoid the squatted PyPI name printer-core
 ]
 
 [project.optional-dependencies]

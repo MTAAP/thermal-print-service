@@ -29,3 +29,11 @@ def test_critical_styled_fields_carry_descriptions():
         assert needle in desc.lower(), (
             f"{cls_name}.{field} description should mention {needle!r}, got: {desc!r}"
         )
+
+
+def test_options_not_before_carries_schema_description():
+    schema = Document.model_json_schema()
+    prop = schema["$defs"]["Options"]["properties"]["not_before"]
+    desc = prop.get("description", "")
+    assert "hold" in desc.lower()
+    assert "not_before" in desc

@@ -1,4 +1,5 @@
 import io
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -73,6 +74,32 @@ async def test_jobs_and_detail_report_latest_non_accepted_event(fake_deps):
 
     assert detail.status_code == 200
     assert detail.json()["status"] == "retry"
+
+
+@pytest.mark.asyncio
+async def test_jobs_and_detail_surface_not_before_hold(fake_deps):
+    app = create_app(fake_deps)
+    not_before = "2099-01-01T00:00:00+00:00"
+    body = json.dumps({
+        "options": {"not_before": not_before},
+        "blocks": [{"type": "paragraph", "text": "later"}],
+    }).encode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as ac:
+        r = await ac.post("/print", content=body,
+                          headers={"Content-Type": "application/json"})
+        job_id = r.json()["id"]
+        listing = await ac.get("/jobs")
+        detail = await ac.get(f"/jobs/{job_id}")
+
+    listed = next(j for j in listing.json()["jobs"] if j["id"] == job_id)
+    assert listed["not_before"] == not_before
+    assert listed["held"] is True
+    assert listed["status"] == "held"
+
+    assert detail.status_code == 200
+    assert detail.json()["not_before"] == not_before
+    assert detail.json()["held"] is True
+    assert detail.json()["status"] == "held"
 
 
 @pytest.mark.asyncio
