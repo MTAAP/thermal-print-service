@@ -100,10 +100,15 @@ def hub_friends_accept(paths: RelayPaths, handle: str) -> None:
 
 
 def hub_leave(paths: RelayPaths) -> None:
+    commands_path = paths.commands_path
     for path in (
         paths.creds_path,
         paths.allowlist_path,
-        paths.commands_path,
+        commands_path,
+        # CommandInbox.drain() can leave this recovery snapshot behind after a
+        # crash; without clearing it here, joining a different hub would replay
+        # a stale "accept" from the previous membership into the fresh allow-list.
+        commands_path.with_name(f"{commands_path.name}.draining"),
         paths.invites_path,
         paths.jobmap_path,
         paths.rate_path,

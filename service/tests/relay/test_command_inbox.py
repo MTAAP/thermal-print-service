@@ -81,11 +81,14 @@ def test_command_inbox_tolerates_torn_tail(relay_paths, caplog):
         + '{"op": "accept", "handle": "erin"'
     )
 
-    ops = CommandInbox(relay_paths.commands_path).drain()
+    inbox = CommandInbox(relay_paths.commands_path)
+    ops = inbox.drain()
 
     assert ops == [{"op": "accept", "handle": "dana", "ts": "2026-07-02T12:00:00Z"}]
-    assert relay_paths.commands_path.exists() is False
     assert "commands.jsonl unreadable line" in caplog.text
+
+    inbox.ack()
+    assert relay_paths.commands_path.exists() is False
 
 
 def test_command_inbox_recovers_renamed_drain_snapshot(relay_paths):
@@ -95,9 +98,29 @@ def test_command_inbox_recovers_renamed_drain_snapshot(relay_paths):
         + "\n"
     )
 
-    ops = CommandInbox(relay_paths.commands_path).drain()
+    inbox = CommandInbox(relay_paths.commands_path)
+    ops = inbox.drain()
 
     assert ops == [{"op": "accept", "handle": "faye", "ts": "2026-07-02T12:00:00Z"}]
+
+    inbox.ack()
+    assert snapshot.exists() is False
+
+
+def test_command_inbox_drain_keeps_snapshot_until_ack(relay_paths):
+    """A crash between drain() and applying its ops must not lose them: the
+    snapshot only disappears after the caller explicitly acks."""
+    inbox = CommandInbox(relay_paths.commands_path)
+    inbox.append({"op": "accept", "handle": "hank", "ts": "2026-07-02T12:00:00Z"})
+
+    ops = inbox.drain()
+    snapshot = relay_paths.commands_path.with_name(f"{relay_paths.commands_path.name}.draining")
+    assert snapshot.exists() is True
+
+    # Re-draining before ack() replays the same pending ops instead of losing them.
+    assert inbox.drain() == ops
+
+    inbox.ack()
     assert snapshot.exists() is False
 
 
@@ -142,6 +165,7 @@ def test_command_inbox_drain_does_not_lose_append_opened_before_rename(
     assert append_done.is_set(), "append did not finish"
     assert not drain_thread.is_alive(), "drain did not finish"
 
+    inbox.ack()
     assert drain_ops + inbox.drain() == [op]
 
 

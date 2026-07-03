@@ -88,6 +88,13 @@ def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
         "alice", "hj-leave", "2026-06-03T14:00:00+00:00"
     )
     assert rate_path.exists()
+    # A crash mid-drain (before ack()) can leave this recovery snapshot behind;
+    # hub_leave must clear it too, or joining a different hub later replays a
+    # stale command from this membership into the fresh allow-list.
+    draining_snapshot = relay_paths.commands_path.with_name(
+        f"{relay_paths.commands_path.name}.draining"
+    )
+    draining_snapshot.write_text('{"op": "accept", "handle": "stale"}\n')
 
     hub_leave(relay_paths)
 
@@ -97,6 +104,7 @@ def test_hub_leave_clears_creds_and_relay_trust_state(relay_paths):
     assert JobMap(relay_paths.jobmap_path).get("hj1") is None
     assert CommandInbox(relay_paths.commands_path).drain() == []
     assert not rate_path.exists()
+    assert not draining_snapshot.exists()
 
 
 def test_hub_status_reports_joined_state(relay_paths):

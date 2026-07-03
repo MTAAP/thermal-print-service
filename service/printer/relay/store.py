@@ -124,6 +124,11 @@ class CommandInbox:
     Commands are append-only JSONL so the CLI never rewrites relay-owned state:
     the long-lived relay drains this inbox and remains the only allowlist.json
     writer, avoiding stale in-memory clobbers from a second AllowList instance.
+
+    drain() and ack() are a two-phase handoff: drain() hands back ops and keeps
+    the snapshot on disk, ack() deletes it. The relay must not call ack() until
+    every op has been applied, so a crash between the two leaves the snapshot
+    in place for the next drain() to replay.
     """
 
     def __init__(self, path: Path) -> None:
@@ -145,40 +150,52 @@ class CommandInbox:
                 os.close(fd)
 
     def drain(self) -> list[dict[str, Any]]:
+        """Return queued commands without deleting the snapshot.
+
+        The caller must call ack() only after every returned op has been durably
+        applied. Deleting the snapshot here (the old behavior) would lose queued
+        commands forever if the process crashes after drain() returns but before
+        the ops are applied to allowlist.json. If ack() hasn't happened yet
+        (e.g. a crash mid-apply), the next drain() re-reads the same pending
+        snapshot instead of picking up self._path, so repeated calls are safe:
+        applying an "accept" op twice is a no-op overwrite in AllowList.add.
+        """
         snapshot = self._path.with_name(f"{self._path.name}.draining")
-        ops: list[dict[str, Any]] = []
         with _exclusive_file_lock(self._lock_path):
-            if snapshot.exists():
-                ops.extend(self._read_snapshot(snapshot))
+            if not snapshot.exists():
+                try:
+                    os.replace(self._path, snapshot)
+                except FileNotFoundError:
+                    return []
+            return self._read_snapshot(snapshot)
 
-            try:
-                os.replace(self._path, snapshot)
-            except FileNotFoundError:
-                return ops
+    def ack(self) -> None:
+        """Delete the drain snapshot after its ops have been applied.
 
-            ops.extend(self._read_snapshot(snapshot))
-            return ops
+        Must only be called once every op from the matching drain() has been
+        durably applied -- see drain()'s docstring for why the deletion is
+        split out from the read.
+        """
+        snapshot = self._path.with_name(f"{self._path.name}.draining")
+        with _exclusive_file_lock(self._lock_path), contextlib.suppress(FileNotFoundError):
+            snapshot.unlink()
 
     def _read_snapshot(self, snapshot: Path) -> list[dict[str, Any]]:
         ops: list[dict[str, Any]] = []
-        try:
-            for line in snapshot.read_text().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                # A power cut can leave a torn final append. Bad command lines
-                # must not stop relay startup: skip the damaged op and replay
-                # every complete command, matching JobMap's bad-line tolerance.
-                try:
-                    op = json.loads(line)
-                    if not isinstance(op, dict):
-                        raise TypeError("command line is not a JSON object")
-                    ops.append(op)
-                except (json.JSONDecodeError, TypeError) as exc:
-                    logger.warning("relay: commands.jsonl unreadable line skipped (%s)", exc)
-        finally:
-            with contextlib.suppress(FileNotFoundError):
-                snapshot.unlink()
+        for line in snapshot.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # A power cut can leave a torn final append. Bad command lines
+            # must not stop relay startup: skip the damaged op and replay
+            # every complete command, matching JobMap's bad-line tolerance.
+            try:
+                op = json.loads(line)
+                if not isinstance(op, dict):
+                    raise TypeError("command line is not a JSON object")
+                ops.append(op)
+            except (json.JSONDecodeError, TypeError) as exc:
+                logger.warning("relay: commands.jsonl unreadable line skipped (%s)", exc)
         return ops
 
 

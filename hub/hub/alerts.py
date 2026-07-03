@@ -81,11 +81,30 @@ async def sweep_offline_alerts(
                     state.mark_recovered(printer.id)
             continue
 
-        if printer.last_seen_at is None or state.is_alerted(printer.id):
+        if printer.last_seen_at is None:
             continue
 
         last_seen_at = _aware(printer.last_seen_at)
-        if current - last_seen_at <= timedelta(seconds=alert_after_s):
+        recently_seen = current - last_seen_at <= timedelta(seconds=alert_after_s)
+
+        if state.is_alerted(printer.id):
+            # A short poll can refresh last_seen_at and release from `online`
+            # before this sweep runs, so the printer never gets caught by the
+            # "if printer.id in online" branch above. Treat a fresh
+            # last_seen_at as recovery here too, or an alerted printer that
+            # only ever reconnects between sweep ticks never recovers.
+            if recently_seen:
+                sent = await _try_send(
+                    printer.id,
+                    topic,
+                    f"{printer.display_name} ({printer.handle}) is back online.",
+                    send,
+                )
+                if sent:
+                    state.mark_recovered(printer.id)
+            continue
+
+        if recently_seen:
             continue
 
         sent = await _try_send(

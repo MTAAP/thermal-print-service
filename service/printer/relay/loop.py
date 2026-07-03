@@ -342,6 +342,10 @@ class RelayClient:
                 self._allowlist.add(handle, display_name=handle, renderer_version=None)
                 continue
             logger.warning("relay: unknown command op skipped: %r", op_name)
+        # Only delete the drain snapshot once every op above has been applied
+        # and flushed to allowlist.json -- a crash before this point leaves the
+        # snapshot in place so the next drain_commands_once() replays it.
+        self._commands.ack()
 
     async def sync_friends_once(self) -> None:
         """Pull the hub's friend list and reconcile it against the local

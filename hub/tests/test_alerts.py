@@ -103,6 +103,48 @@ async def test_recovery_sends_once_after_offline_alert(sm):
     assert "back online" in recorder.posts[1][1]
 
 
+async def test_recovery_detected_from_fresh_last_seen_without_online_flag(sm):
+    """A printer can refresh last_seen_at via a short poll and release from
+    `online` before the next sweep tick runs -- e.g. draining queued jobs with
+    quick round trips rather than holding a long poll. Recovery must still be
+    detected from a fresh last_seen_at alone, or an alerted printer that only
+    ever reconnects between sweeps never recovers."""
+    from hub.alerts import OfflineAlertState, sweep_offline_alerts
+
+    await _printer(sm)
+    recorder = Recorder()
+    state = OfflineAlertState()
+
+    async with sm() as s:
+        await sweep_offline_alerts(
+            s,
+            online=Presence(),
+            alert_after_s=300,
+            state=state,
+            send=recorder.send,
+        )
+        assert state.is_alerted("prn_bob") is True
+
+        # Printer reconnects: last_seen_at refreshes, but it's never caught by
+        # `online` at sweep time (short poll already released).
+        printer = await s.get(Printer, "prn_bob")
+        printer.last_seen_at = now()
+        await s.commit()
+
+        await sweep_offline_alerts(
+            s,
+            online=Presence(),
+            alert_after_s=300,
+            state=state,
+            send=recorder.send,
+        )
+
+    assert state.is_alerted("prn_bob") is False
+    assert len(recorder.posts) == 2
+    assert "offline" in recorder.posts[0][1]
+    assert "back online" in recorder.posts[1][1]
+
+
 async def test_flapping_inside_threshold_does_not_alert(sm):
     from hub.alerts import OfflineAlertState, sweep_offline_alerts
 
