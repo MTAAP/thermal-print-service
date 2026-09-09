@@ -95,24 +95,52 @@ done
 $SUDO systemctl daemon-reload
 
 # Host-liveness hardening (see deploy/io-stall-watchdog.sh for the full rationale).
-# A systemd RuntimeWatchdog only proves PID1 is alive: during an SD-card I/O stall
-# the rootfs stops accepting writes and every disk-bound process wedges in D-state,
-# yet systemd keeps petting /dev/watchdog (its keepalive never touches disk), so the
-# host can stay dark indefinitely instead of resetting. This health-gated watchdog
-# probes a real write+fsync and forces a sysrq reset when the rootfs goes silent,
-# turning a multi-hour hang into ~80s of auto-recovery. The journal size cap bounds
-# SD write wear and keeps logs across unclean reboots.
-echo "==> install I/O-stall host watchdog + journal size cap"
+# A systemd RuntimeWatchdog only proves PID 1 is alive. During an SD-card I/O stall
+# the rootfs stops accepting writes and every disk-bound process wedges in D-state;
+# during a brcmfmac firmware wedge the box is locally fine and unreachable. systemd
+# pets /dev/watchdog through both, because its keepalive touches neither the disk
+# nor the network. So we take RuntimeWatchdogSec away from systemd and give the
+# device to a daemon that pets it only while both surfaces answer.
+echo "==> install host watchdog, persistent journal, wifi power-save off, health log"
 $SUDO install -m 0755 deploy/io-stall-watchdog.sh /usr/local/sbin/io-stall-watchdog.sh
 $SUDO install -m 0644 deploy/io-stall-watchdog.service /etc/systemd/system/io-stall-watchdog.service
 $SUDO install -d -m 0755 /etc/sysctl.d
 $SUDO install -m 0644 deploy/io-stall-watchdog.sysctl.conf /etc/sysctl.d/99-io-stall-watchdog.conf
+
+# Only one process may hold /dev/watchdog0, so systemd has to let go first. This
+# drop-in sorts after the vendor's 40-rpi-enable-watchdog.conf and wins.
+$SUDO install -d -m 0755 /etc/systemd/system.conf.d
+$SUDO install -m 0644 deploy/systemd-no-runtime-watchdog.conf \
+    /etc/systemd/system.conf.d/50-no-runtime-watchdog.conf
+
+# Persistent journal. The vendor ships Storage=volatile in a 40- drop-in, so ours
+# has to sort after it; the old 00-size.conf lost that race silently and every
+# reboot took its logs with it. Remove the stale name so there is one file, not two.
 $SUDO install -d -m 0755 /etc/systemd/journald.conf.d
-$SUDO install -m 0644 deploy/journald-size.conf /etc/systemd/journald.conf.d/00-size.conf
+$SUDO rm -f /etc/systemd/journald.conf.d/00-size.conf
+$SUDO install -m 0644 deploy/journald.conf /etc/systemd/journald.conf.d/50-printer.conf
+$SUDO install -d -m 2755 -o root -g systemd-journal /var/log/journal
+
+# Wifi power save off: a known firmware-wedge trigger on this chip.
+if [ -d /etc/NetworkManager ]; then
+    $SUDO install -d -m 0755 /etc/NetworkManager/conf.d
+    $SUDO install -m 0644 deploy/wifi-powersave-off.conf \
+        /etc/NetworkManager/conf.d/50-wifi-powersave-off.conf
+fi
+
+# Board health into the journal, so the next incident has a before.
+$SUDO install -m 0755 deploy/health-log.sh /usr/local/sbin/health-log.sh
+$SUDO install -m 0644 deploy/health-log.service /etc/systemd/system/health-log.service
+$SUDO install -m 0644 deploy/health-log.timer /etc/systemd/system/health-log.timer
+
 $SUDO sysctl --system >/dev/null
 $SUDO systemctl restart systemd-journald
 $SUDO systemctl daemon-reload
+# Releases /dev/watchdog0 from PID 1 so the daemon below can claim it.
+$SUDO systemctl daemon-reexec
 $SUDO systemctl enable --now io-stall-watchdog.service
+$SUDO systemctl enable --now health-log.timer
+$SUDO systemctl reload NetworkManager 2>/dev/null || true
 
 echo "==> done. Reboot once for lp group to take effect, or open a new login shell."
 echo "    To join the friend network: printer-svc hub join <code> --handle <h> --display-name <n>"
