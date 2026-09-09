@@ -30,6 +30,14 @@
 #      take over -- and the pet interval is derived from it at startup rather
 #      than hardcoded. The pet asks a cached health flag, never a fresh probe.
 #
+# To watch the recovery ladder climb without touching the real network or the
+# real watchdog device, run it against a fake device with the bounce delay set
+# to zero -- every step names itself and performs nothing:
+#
+#   sudo IOWDT_DRYRUN=1 IOWDT_WATCHDOG=/tmp/fake-wd IOWDT_RUN_DIR=/run/iowdt-test \
+#        IOWDT_NET_BOUNCE=0 IOWDT_NET_BOUNCE_INTERVAL=2 IOWDT_GRACE=0 \
+#        timeout 11 /usr/local/sbin/io-stall-watchdog.sh
+#
 # If /dev/watchdog0 cannot be opened -- most likely because systemd still holds
 # it, see 40-rpi-enable-watchdog.conf -- this degrades to the sysrq path and
 # says so loudly. It never degrades into a reboot loop.
@@ -46,8 +54,9 @@ WATCHDOG_DEV="${IOWDT_WATCHDOG:-/dev/watchdog0}"
 PET_INTERVAL="${IOWDT_PET_INTERVAL:-0}"    # 0 = derive from the hardware timeout
 PROBE_INTERVAL="${IOWDT_INTERVAL:-20}"     # seconds between probe launches
 DISK_LIMIT="${IOWDT_DISK_LIMIT:-80}"       # no successful disk probe for this long -> unhealthy
-NET_LIMIT="${IOWDT_NET_LIMIT:-600}"        # no network for this long -> unhealthy
-NET_BOUNCE_AFTER="${IOWDT_NET_BOUNCE:-180}" # try kicking the interface first
+NET_LIMIT="${IOWDT_NET_LIMIT:-240}"        # no network for this long -> unhealthy
+NET_BOUNCE_AFTER="${IOWDT_NET_BOUNCE:-90}"  # start trying to fix the link at this age
+NET_BOUNCE_INTERVAL="${IOWDT_NET_BOUNCE_INTERVAL:-60}"  # seconds between recovery steps
 NET_IFACE="${IOWDT_NET_IFACE:-wlan0}"
 GRACE="${IOWDT_GRACE:-120}"                # do not arm until this much uptime
 DRYRUN="${IOWDT_DRYRUN:-0}"                # 1 = log the decision, keep petting
@@ -107,6 +116,27 @@ probe_net() {
     ) >/dev/null 2>&1 &
 }
 
+# The recovery ladder, in increasing order of force. NetworkManager owns wlan0
+# on this box, so a raw link bounce is the gentlest thing that can clear a
+# brcmfmac wedge, and restarting NetworkManager is the last thing short of a
+# reset. Each is a plain function so start_recovery can background it without
+# eval, and so a dry run can name the step without performing it.
+recover_link_bounce() { ip link set "$NET_IFACE" down; sleep 2; ip link set "$NET_IFACE" up; }
+recover_nm_reconnect() { nmcli device disconnect "$NET_IFACE"; sleep 2; nmcli device connect "$NET_IFACE"; }
+recover_nm_restart() { systemctl restart NetworkManager; }
+
+start_recovery() { # start_recovery <description> <function>
+    _what=$1
+    shift
+    log "no network for ${net_age}s -- recovery step $bounce_step: $_what"
+    if [ "$DRYRUN" = "1" ]; then
+        log "DRYRUN: would run $*"
+        return 0
+    fi
+    "$@" >/dev/null 2>&1 &
+    bounce_pid=$!
+}
+
 # Age of a stamp in seconds, or a number larger than any limit when missing. The
 # read is tmpfs-only, so it cannot inherit the stall it is measuring.
 stamp_age() {
@@ -131,11 +161,14 @@ printf '%s\n' "$(uptime_s)" > "$DISK_STAMP" 2>/dev/null
 printf '%s\n' "$(uptime_s)" > "$NET_STAMP" 2>/dev/null
 
 last_probe=0
-bounced=0
+last_bounce=0
+bounce_step=0
+bounce_pid=""
 unhealthy_logged=0
 
 log "started disk=$PROBE_DIR iface=$NET_IFACE pet=${PET_INTERVAL}s probe=${PROBE_INTERVAL}s" \
-    "disk_limit=${DISK_LIMIT}s net_limit=${NET_LIMIT}s grace=${GRACE}s dryrun=$DRYRUN wd=$HAVE_WD"
+    "disk_limit=${DISK_LIMIT}s net_limit=${NET_LIMIT}s bounce_after=${NET_BOUNCE_AFTER}s" \
+    "bounce_every=${NET_BOUNCE_INTERVAL}s grace=${GRACE}s dryrun=$DRYRUN wd=$HAVE_WD"
 
 while : ; do
     up=$(uptime_s)
@@ -167,20 +200,33 @@ while : ; do
     disk_age=$(stamp_age "$DISK_STAMP")
     net_age=$(stamp_age "$NET_STAMP")
 
-    # One attempt to kick the radio before treating the network as fatal: a
-    # brcmfmac wedge sometimes clears on a link bounce, and a reboot costs the
-    # print queue its in-flight job.
-    if [ "$net_age" -ge "$NET_BOUNCE_AFTER" ] && [ "$bounced" -eq 0 ]; then
-        bounced=1
-        log "no network for ${net_age}s -- bouncing $NET_IFACE once"
-        (ip link set "$NET_IFACE" down; sleep 2; ip link set "$NET_IFACE" up) >/dev/null 2>&1 &
+    # Try to fix the link before treating the network as fatal, and hit harder
+    # each time. A single link bounce was enough on 2026-09-09 at 16:31 and
+    # 17:06 and not enough at 18:25, so one attempt is a coin flip. Each step
+    # runs detached: a wedged NetworkManager must never block the pet.
+    if [ "$net_age" -ge "$NET_BOUNCE_AFTER" ] &&
+       [ $((up - last_bounce)) -ge "$NET_BOUNCE_INTERVAL" ]; then
+        if child_alive "$bounce_pid"; then
+            log "previous recovery step still running (pid $bounce_pid) -- not starting another"
+        else
+            last_bounce=$up
+            bounce_step=$((bounce_step + 1))
+            case "$bounce_step" in
+                1) start_recovery "a link bounce of $NET_IFACE" recover_link_bounce ;;
+                2) start_recovery "a NetworkManager reconnect" recover_nm_reconnect ;;
+                *) start_recovery "a NetworkManager restart" recover_nm_restart ;;
+            esac
+        fi
     fi
-    [ "$net_age" -lt "$NET_BOUNCE_AFTER" ] && bounced=0
 
     if [ "$disk_age" -lt "$DISK_LIMIT" ] && [ "$net_age" -lt "$NET_LIMIT" ]; then
         if [ "$unhealthy_logged" -eq 1 ]; then
             log "recovered (disk ${disk_age}s ago, network ${net_age}s ago)"
             unhealthy_logged=0
+        fi
+        if [ "$bounce_step" -ne 0 ] && [ "$net_age" -lt "$NET_BOUNCE_AFTER" ]; then
+            log "network back after $bounce_step recovery step(s)"
+            bounce_step=0
         fi
         pet
     else
