@@ -4,7 +4,6 @@ from typing import Any
 
 import httpx
 
-from printer_mcp.config import McpConfig
 from printer_mcp.errors import PrintServiceError
 
 
@@ -20,12 +19,23 @@ class HubClient:
     connection pooling kicks in across tool invocations.
     """
 
-    def __init__(self, cfg: McpConfig, *, http: httpx.AsyncClient | None = None) -> None:
-        self._cfg = cfg
+    def __init__(
+        self,
+        hub_url: str,
+        api_token: str,
+        *,
+        timeout_s: float = 30.0,
+        http: httpx.AsyncClient | None = None,
+    ) -> None:
+        # Explicit fields rather than an McpConfig: the guestbook server has its
+        # own config object and no print-service URL at all, so a shared client
+        # that only ever needed three values must not depend on the stdio
+        # server's config shape.
+        self._hub_url = hub_url
         self._http = http or httpx.AsyncClient(
-            base_url=cfg.hub_url,
-            timeout=cfg.timeout_s,
-            headers={"Authorization": f"Bearer {cfg.hub_api_token}"},
+            base_url=hub_url,
+            timeout=timeout_s,
+            headers={"Authorization": f"Bearer {api_token}"},
         )
 
     async def aclose(self) -> None:
@@ -102,7 +112,7 @@ class HubClient:
             raise PrintServiceError(
                 status=0,
                 message=(
-                    f"could not reach hub at {self._cfg.hub_url}: "
+                    f"could not reach hub at {self._hub_url}: "
                     f"{exc.__class__.__name__}: {exc}"
                 ),
             ) from exc

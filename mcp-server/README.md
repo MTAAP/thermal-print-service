@@ -703,3 +703,64 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 ```
 
 For real interactive testing, point an MCP client (Claude Desktop, Inspector) at it.
+
+## The guestbook: letting strangers send you a printed note
+
+`printer-mcp-guestbook` is a second, much smaller server in this package. It
+exposes exactly one tool, which sends the owner a short note on paper, and
+nothing else: no status, no job list, no reprint, no raw image path. Point a
+public chat host at it and its users can put text on your printer, without
+being able to do anything else with it.
+
+It talks to the **hub**, not to a printer directly, so it needs no tailnet
+access and a note sent while the printer is off still prints when it comes back
+(the hub holds a job for 24 hours). The recipient's own relay is the last word:
+its allow-list has to name the sending handle, and its per-sender hourly ceiling
+applies underneath whatever the guestbook allows.
+
+```bash
+HUB_URL=https://your-hub.example \
+HUB_API_TOKEN=... \
+GUESTBOOK_RECIPIENT=your-handle \
+GUESTBOOK_OWNER_NAME=Alex \
+GUESTBOOK_TOOL_NAME=message_alex \
+printer-mcp-guestbook
+```
+
+It serves streamable HTTP on `GUESTBOOK_HOST:GUESTBOOK_PORT` (default
+`0.0.0.0:8000`) at `/mcp`, and refuses to start without `HUB_URL`,
+`HUB_API_TOKEN` and `GUESTBOOK_RECIPIENT` — a server that boots and then fails
+every send looks healthy to the chat host while silently swallowing messages.
+There is a `Dockerfile` beside this README that installs against
+`constraints.txt`, so an image build resolves no unvetted release.
+
+### What it enforces
+
+The guest is the adversary and the model is on the guest's side, so nothing the
+model decides is a control. These are:
+
+| Setting | Default | What it stops |
+|---|---|---|
+| `GUESTBOOK_MAX_NAME_CHARS` | 40 | A name that is really a message |
+| `GUESTBOOK_MAX_MESSAGE_CHARS` | 500 | The obvious paper attack |
+| `GUESTBOOK_MAX_MESSAGE_LINES` | 20 | The cheaper one: mostly-newline text |
+| `GUESTBOOK_PER_GUEST_PER_HOUR` | 10 | One conversation running away |
+| `GUESTBOOK_GLOBAL_PER_DAY` | 100 | Everyone else, together |
+
+Text is NFKC-normalised with control and format characters stripped, so
+zero-width padding cannot smuggle a rejected name past the check, and runs of
+blank lines collapse. A placeholder name (`anonymous`, `guest`, `n/a` and
+friends) is refused with text that tells the model to go and ask, which is the
+enforceable half of "make them say who they are"; the tool description carries
+the other half. Refusals never reach the hub and never consume quota.
+
+Quotas persist to `GUESTBOOK_STATE_DIR` (default `/var/lib/printer-guestbook`),
+because an in-memory window would hand every restart a fresh allowance. Run one
+process per printer: two sharing a state file would clobber each other's window,
+and two with separate files would quietly allow twice the paper.
+
+`GUESTBOOK_GUEST_ID_HEADER` (default `x-guest-id`) names the header the chat
+host sets to tell one session from another. In LibreChat that is
+`x-guest-id: "{{LIBRECHAT_USER_ID}}"`. Treat the per-guest cap as a speed bump
+rather than an identity quota: where guest accounts are ephemeral, a new session
+is a new id, so the daily total is the number that actually bounds a roll.

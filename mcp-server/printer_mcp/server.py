@@ -9,6 +9,7 @@ from mcp.server import Server
 
 from printer_mcp.client import PrintServiceClient
 from printer_mcp.config import McpConfig
+from printer_mcp.documents import compose_text_document
 from printer_mcp.errors import PrintServiceError, format_for_agent
 from printer_mcp.hub_client import HubClient
 from printer_mcp.schema_cache import SchemaCache
@@ -151,19 +152,6 @@ def build_message_friend_input_schema() -> dict[str, Any]:
         "required": ["to", "text"],
         "additionalProperties": False,
     }
-
-
-def _compose_text_document(title: str, text: str) -> dict[str, Any]:
-    # Common-core only (header + paragraph): these block types are stable across
-    # EVERY renderer version (hub spec §6.2), so a plain-text message needs no
-    # get_friend_schema round-trip -- any friend's printer accepts it. Mirrors
-    # the hub web console's compose document exactly (header iff a title, then a
-    # paragraph; field name is `text`, not `content`).
-    blocks: list[dict[str, Any]] = []
-    if title.strip():
-        blocks.append({"type": "header", "text": title.strip()})
-    blocks.append({"type": "paragraph", "text": text})
-    return {"blocks": blocks}
 
 
 def _ok(payload: Any) -> list[mcp_types.TextContent]:
@@ -474,7 +462,7 @@ async def _call_message_friend(
     idem_str = str(idem) if idem else None
     # Compose the common-core document here, then reuse the same hub /send path
     # as send_to_friend -- message_friend is purely an ergonomic wrapper.
-    document = _compose_text_document(title_str, text)
+    document = compose_text_document(title_str, text)
     return _ok(await hub_client.send(to=to, document=document, idempotency_key=idem_str))
 
 

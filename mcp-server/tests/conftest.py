@@ -110,7 +110,7 @@ def make_hub_client(transport: httpx.MockTransport, *, token: str = "tok-test") 
         timeout=cfg.timeout_s,
         headers={"Authorization": f"Bearer {cfg.hub_api_token}"},
     )
-    return HubClient(cfg, http=http)
+    return HubClient(cfg.hub_url, cfg.hub_api_token, timeout_s=cfg.timeout_s, http=http)
 
 
 @pytest.fixture
@@ -149,7 +149,7 @@ def build_with_handler(cfg, handler, *, hub_handler=None):
         timeout=cfg.timeout_s,
         headers={"Authorization": f"Bearer {cfg.hub_api_token}"},
     )
-    hub_client = HubClient(cfg, http=hub_http)
+    hub_client = HubClient(cfg.hub_url, cfg.hub_api_token, timeout_s=cfg.timeout_s, http=hub_http)
 
     server = build_server(cfg, client, cache, hub_client)
     return server, cache, client, hub_client

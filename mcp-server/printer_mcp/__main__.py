@@ -16,7 +16,7 @@ from printer_mcp.server import build_server
 async def _run() -> None:
     cfg = McpConfig.from_env()
     client = PrintServiceClient(cfg)
-    hub_client = HubClient(cfg)
+    hub_client = HubClient(cfg.hub_url, cfg.hub_api_token, timeout_s=cfg.timeout_s)
     cache = SchemaCache(client)
 
     # Best-effort boot fetch. If the Pi is unreachable we still start the
