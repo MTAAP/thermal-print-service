@@ -98,7 +98,13 @@ async def test_per_guest_hourly_cap_stops_one_conversation(cfg, hub):
 
 async def test_daily_total_survives_a_fresh_guest_id(cfg, hub):
     """The per-guest cap resets with every new session, so the daily total is
-    the control that actually bounds the paper. A new guest id must not reset it."""
+    the control that actually bounds the paper. A new guest id must not reset it.
+
+    The hourly total is lifted out of the way here so the daily one is what is
+    actually under test; they are separately covered."""
+    import dataclasses
+
+    cfg = dataclasses.replace(cfg, global_per_hour=1000)
     for i in range(cfg.global_per_day):
         _, _, ok = await _call(cfg, hub, name="Robin", message=f"hi {i}",
                                guest_id=f"fresh-{i}")
@@ -144,11 +150,33 @@ async def test_preformatted_keeps_its_spacing_and_line_breaks(cfg, hub):
 
 async def test_prose_still_collapses_and_still_uses_a_paragraph(cfg, hub):
     """The art path must not loosen the prose path: runs of spaces and blank
-    lines are still the cheap way to feed paper when the text is not a drawing."""
-    await _call(cfg, hub, name="Robin", message="a   b\n\n\n\nc", preformatted=False)
+    lines are still the cheap way to feed paper when the text is not a drawing.
+
+    The sample is real prose, because the detector reads the shape of the text:
+    a double space anywhere would (correctly) make this a drawing."""
+    note = "Hi Tim, the lift is broken again.\n\n\n\nSorry to be the one to say."
+    await _call(cfg, hub, name="Robin", message=note, preformatted=False)
     blocks = hub.sends[0]["document"]["blocks"]
     assert [b["type"] for b in blocks] == ["header", "paragraph"]
-    assert blocks[1]["text"] == "From: Robin\n\na b\n\nc"
+    assert blocks[1]["text"] == (
+        "From: Robin\n\nHi Tim, the lift is broken again.\n\nSorry to be the one to say."
+    )
+
+
+async def test_art_survives_even_when_the_model_forgets_the_flag(cfg, hub):
+    """The bug Tim hit: an ASCII poop emoji sent with preformatted unset went
+    into a paragraph, which reflows every line onto one, so the drawing printed
+    as a single mangled row beside the sender's name.
+
+    A flag the model has to remember is not a mechanism. The shape of the text
+    decides, and the flag only ever adds to that."""
+    poop = ")('\n ) )\n ( o o )\n ( ___ )\n (_______)"
+    _, _, text = await _call(cfg, hub, name="tim", message=poop, preformatted=False)
+    assert "Sent." in text
+    blocks = hub.sends[0]["document"]["blocks"]
+    art = [b for b in blocks if b["type"] == "ascii_art"]
+    assert art, f"drawing rendered as {[b['type'] for b in blocks]}, not ascii_art"
+    assert art[0]["text"] == poop
 
 
 async def test_art_wider_than_the_paper_is_refused_not_clipped(cfg, hub):
@@ -165,11 +193,11 @@ async def test_art_wider_than_the_paper_is_refused_not_clipped(cfg, hub):
 async def test_art_gets_a_bigger_budget_than_prose(cfg, hub):
     """Art that would be refused as prose goes through, because a drawing needs
     lines that prose does not."""
-    tall = "\n".join(f"{'.' * 10}{i:02d}" for i in range(cfg.max_message_lines + 5))
+    tall = "\n".join(f"line {i} of an ordinary note" for i in range(cfg.max_message_lines + 5))
     _, _, refused = await _call(cfg, hub, name="Robin", message=tall, preformatted=False)
     assert "Not sent" in refused
     _, _, sent = await _call(cfg, hub, name="Robin", message=tall, preformatted=True)
-    assert "Sent." in sent
+    assert "Sent." in sent, "the flag must still force the larger budget on its own"
 
 
 async def test_art_is_still_bounded(cfg, hub):
@@ -178,3 +206,20 @@ async def test_art_is_still_bounded(cfg, hub):
     _, _, text = await _call(cfg, hub, name="Robin", message=too_tall, preformatted=True)
     assert "Not sent" in text and "lines" in text
     assert hub.sends == []
+
+
+async def test_hourly_total_refuses_before_the_relay_silently_would(cfg, hub):
+    """The recipient's relay has its own per-sender hourly ceiling and rejects
+    below the hub, which has already answered "queued" -- so tripping THAT
+    ceiling tells the guest "Sent." and prints nothing.
+
+    Keeping an hourly total here, set under the relay's, means the refusal
+    happens where somebody is listening."""
+    for i in range(cfg.global_per_hour):
+        _, _, ok = await _call(cfg, hub, name="Robin", message=f"note {i}",
+                               guest_id=f"g-{i}")
+        assert "Sent." in ok
+    _, _, text = await _call(cfg, hub, name="Robin", message="one more",
+                             guest_id="g-late")
+    assert "Not sent" in text and "hour" in text
+    assert len(hub.sends) == cfg.global_per_hour

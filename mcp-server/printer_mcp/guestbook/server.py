@@ -26,6 +26,7 @@ from printer_mcp.guestbook.sanitize import (
     clean_art,
     clean_message,
     clean_name,
+    looks_like_art,
 )
 from printer_mcp.hub_client import HubClient
 
@@ -93,6 +94,7 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
     hub = hub_client or HubClient(cfg.hub_url, cfg.hub_api_token, timeout_s=cfg.timeout_s)
     quota = QuotaStore(cfg.state_dir / "quota.json",
                        per_guest_per_hour=cfg.per_guest_per_hour,
+                       global_per_hour=cfg.global_per_hour,
                        global_per_day=cfg.global_per_day)
 
     @mcp.tool(name=cfg.tool_name, description=_tool_description(cfg))
@@ -110,9 +112,13 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
                 False for prose, which is reflowed to the paper width.
         """
         guest_id = _guest_id(ctx, cfg.guest_id_header)
+        # The flag is a hint the model may forget, so the text gets a vote too.
+        # Whichever says "art" wins, because rendering a drawing as prose
+        # destroys it while rendering a note as art merely looks plain.
+        as_art = preformatted or looks_like_art(message)
         try:
             name = clean_name(from_name, max_chars=cfg.max_name_chars)
-            if preformatted:
+            if as_art:
                 body = clean_art(message, max_chars=cfg.max_art_chars,
                                  max_lines=cfg.max_art_lines,
                                  max_cols=cfg.max_art_cols)
@@ -130,7 +136,7 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
             return f"Not sent. {exc}"
 
         title = f"Message for {cfg.owner_name}"
-        if preformatted:
+        if as_art:
             document = compose_art_document(title, f"From: {name}", body)
         else:
             document = compose_text_document(title, f"From: {name}\n\n{body}")
@@ -149,8 +155,8 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
 
         queued = _queued(result)
         logger.info(
-            "guestbook: guest=%s name=%s chars=%d preformatted=%s queued=%s counts=%s",
-            guest_id, name, len(body), preformatted, queued, quota.snapshot(),
+            "guestbook: guest=%s name=%s chars=%d art=%s (flag=%s) queued=%s counts=%s",
+            guest_id, name, len(body), as_art, preformatted, queued, quota.snapshot(),
         )
         if not queued:
             return (

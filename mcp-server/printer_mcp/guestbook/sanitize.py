@@ -60,6 +60,40 @@ def clean_name(raw: str, *, max_chars: int) -> str:
     return name
 
 
+def looks_like_art(raw: str) -> bool:
+    """Decide whether text must keep its own layout, without asking the model.
+
+    The `preformatted` flag exists, but a flag the model has to remember is not
+    a mechanism: it set the flag for "an ASCII art sign" and forgot it for "an
+    ASCII poop emoji", and the forgotten case rendered as a paragraph, which
+    reflows every line onto one. So the shape of the text decides, and the flag
+    only ever adds to that.
+
+    Two signals, either of which is enough, and both need more than one line:
+
+      - a run of two or more spaces inside a line, which prose does not have but
+        every aligned drawing does
+      - a high share of punctuation, which is what a drawing is made of and what
+        a sentence is not
+
+    A genuine multi-line note ("Hi Tim,\n\nHope you are well") trips neither and
+    stays prose, which is what should happen: rendering it as monospace art
+    would be its own kind of wrong."""
+    text = raw.strip()
+    if "\n" not in text:
+        return False
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    if len(lines) < 2:
+        return False
+    if any(re.search(r"\S {2,}\S", ln) for ln in lines):
+        return True
+    visible = [ch for ch in text if not ch.isspace()]
+    if not visible:
+        return False
+    punctuation = sum(1 for ch in visible if not ch.isalnum())
+    return punctuation / len(visible) > 0.25
+
+
 def clean_art(raw: str, *, max_chars: int, max_lines: int, max_cols: int) -> str:
     """Return preformatted text with its spacing intact.
 

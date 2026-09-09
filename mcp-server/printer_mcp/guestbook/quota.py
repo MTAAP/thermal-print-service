@@ -46,9 +46,11 @@ def _coerce(raw: object) -> tuple[dict[str, list[float]], list[float]]:
 
 
 class QuotaStore:
-    def __init__(self, path: Path, *, per_guest_per_hour: int, global_per_day: int) -> None:
+    def __init__(self, path: Path, *, per_guest_per_hour: int, global_per_hour: int,
+                 global_per_day: int) -> None:
         self._path = path
         self._per_guest_per_hour = per_guest_per_hour
+        self._global_per_hour = global_per_hour
         self._global_per_day = global_per_day
         self._guests: dict[str, list[float]] = {}
         self._total: list[float] = []
@@ -88,6 +90,16 @@ class QuotaStore:
                 "The printer has taken all the messages it can hold for today. "
                 "Tell the guest to try again tomorrow."
             )
+        # An hourly total as well as a daily one, because the recipient's relay
+        # enforces its own per-sender hourly ceiling and rejects silently: the
+        # hub answers "queued" before the relay ever sees the job, so a guest
+        # who trips that ceiling is told the note was sent and no paper appears.
+        # Staying under it keeps the refusal here, where the guest is told.
+        if len([t for t in self._total if t > now - _HOUR_S]) >= self._global_per_hour:
+            raise QuotaExceeded(
+                "The printer has had a lot of messages this hour and is taking a "
+                "break. Tell the guest to try again a bit later."
+            )
         if len(self._guests.get(guest_id, [])) >= self._per_guest_per_hour:
             raise QuotaExceeded(
                 f"This guest has already sent {self._per_guest_per_hour} messages "
@@ -101,6 +113,8 @@ class QuotaStore:
         """Counts for the audit log. Does not mutate the persisted window."""
         now = time.time() if now is None else now
         return {
+            "sent_this_hour": len([t for t in self._total if t > now - _HOUR_S]),
+            "global_per_hour": self._global_per_hour,
             "sent_today": len([t for t in self._total if t > now - _DAY_S]),
             "global_per_day": self._global_per_day,
         }

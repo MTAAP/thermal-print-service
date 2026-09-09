@@ -32,6 +32,9 @@ class GuestbookConfig:
     # against one conversation running away, not an identity-based quota. The
     # daily total is the control that actually bounds a roll of paper.
     per_guest_per_hour: int = 10
+    # Must stay BELOW the recipient relay's per-sender hourly ceiling, or that
+    # ceiling fires first and does it silently.
+    global_per_hour: int = 20
     global_per_day: int = 100
 
     max_name_chars: int = 40
@@ -65,6 +68,7 @@ class GuestbookConfig:
             per_guest_per_hour=int(
                 e.get("GUESTBOOK_PER_GUEST_PER_HOUR", cls.per_guest_per_hour)
             ),
+            global_per_hour=int(e.get("GUESTBOOK_GLOBAL_PER_HOUR", cls.global_per_hour)),
             global_per_day=int(e.get("GUESTBOOK_GLOBAL_PER_DAY", cls.global_per_day)),
             max_name_chars=int(e.get("GUESTBOOK_MAX_NAME_CHARS", cls.max_name_chars)),
             max_message_chars=int(
