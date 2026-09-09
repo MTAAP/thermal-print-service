@@ -349,7 +349,8 @@ class RelayClient:
                 invites=InviteStore(self._paths.invites_path),
             )
         except Exception as exc:
-            logger.warning("relay: friend sync skipped (%s)", exc)
+            logger.warning("relay: friend sync skipped (%s: %s)",
+                           type(exc).__name__, exc or "no detail")
 
     # ----- capability reporting (spec 6.2) -----
 
@@ -377,8 +378,21 @@ class RelayClient:
             raise RuntimeError("not joined to a hub; run `printer-svc hub join <code>` first")
         backoff = self._cfg.reconnect_backoff_base_s
         while True:
-            async with httpx.AsyncClient(base_url=creds["hub_url"]) as hub_http, \
-                    httpx.AsyncClient(base_url=self._cfg.local_service_url) as local_http:
+            # httpx defaults to a 5s timeout on every phase, which is shorter
+            # than this hub actually answers in. A cold GET /friends against the
+            # hosted hub was measured at 9.0s from the Pi (warm calls are under
+            # 1s), and every per-cycle maintenance call -- replay, capabilities,
+            # friend sync -- runs on this client's default. A timeout there
+            # raises out of _poll_once BEFORE the inbox long-poll, so the cycle
+            # backs off without ever opening a poll, and a job queued in that
+            # window waits for the next cycle instead of arriving on the hub's
+            # wake event. Measured cost: 70s from send to print, against ~1s
+            # when a poll is actually open. The inbox call still overrides this
+            # with wait + 10s.
+            async with httpx.AsyncClient(base_url=creds["hub_url"],
+                                         timeout=self._cfg.hub_timeout_s) as hub_http, \
+                    httpx.AsyncClient(base_url=self._cfg.local_service_url,
+                                      timeout=self._cfg.local_timeout_s) as local_http:
                 self._hub = HubClient(
                     hub_http, device_token=creds["device_token"], api_token=creds["api_token"]
                 )
@@ -415,8 +429,12 @@ class RelayClient:
                             await self._poll_once()
                             backoff = self._cfg.reconnect_backoff_base_s  # reset on success
                         except httpx.HTTPError as exc:
-                            logger.warning("relay: hub unreachable (%s); backing off %.1fs",
-                                           exc, backoff)
+                            # Log the class as well as the message. Several httpx
+                            # errors stringify to "", so the bare message printed
+                            # "hub unreachable ()" and named neither the failure
+                            # nor the phase it happened in.
+                            logger.warning("relay: hub unreachable (%s: %s); backing off %.1fs",
+                                           type(exc).__name__, exc or "no detail", backoff)
                             await asyncio.sleep(backoff)
                             backoff = min(backoff * 2, self._cfg.reconnect_backoff_max_s)
                         except Exception:

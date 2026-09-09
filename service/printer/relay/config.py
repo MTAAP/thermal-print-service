@@ -21,6 +21,13 @@ class RelayConfig:
     relay_state_dir: Path = Path("/var/lib/printer/relay")
     local_service_url: str = "http://127.0.0.1:8000"
     long_poll_wait_s: float = 25.0
+    # Default timeouts for the two HTTP clients. httpx's own default is 5s,
+    # which the hosted hub exceeds on a cold call, so leaving it unset turned a
+    # slow response into a dropped poll cycle. The local service renders
+    # synchronously before returning 202, and a big document on a Pi Zero takes
+    # real seconds, so it gets headroom too.
+    hub_timeout_s: float = 30.0
+    local_timeout_s: float = 60.0
     # Per-friend ceiling. 12/hour is generous for a 1-20 jobs/day appliance and
     # blunts a compromised-friend flood (spec 7.1).
     per_friend_rate_per_hour: int = 12
@@ -52,6 +59,8 @@ class RelayConfig:
             relay_state_dir=Path(e.get("PRINTER_RELAY_STATE_DIR", str(cls.relay_state_dir))),
             local_service_url=local_url,
             long_poll_wait_s=float(e.get("PRINTER_RELAY_LONG_POLL_WAIT_S", cls.long_poll_wait_s)),
+            hub_timeout_s=float(e.get("PRINTER_RELAY_HUB_TIMEOUT_S", cls.hub_timeout_s)),
+            local_timeout_s=float(e.get("PRINTER_RELAY_LOCAL_TIMEOUT_S", cls.local_timeout_s)),
             per_friend_rate_per_hour=int(
                 e.get("PRINTER_RELAY_RATE_PER_HOUR", cls.per_friend_rate_per_hour)
             ),

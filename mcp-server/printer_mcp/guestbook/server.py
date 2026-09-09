@@ -17,11 +17,16 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from printer_mcp.documents import compose_text_document
+from printer_mcp.documents import compose_art_document, compose_text_document
 from printer_mcp.errors import PrintServiceError
 from printer_mcp.guestbook.config import GuestbookConfig
 from printer_mcp.guestbook.quota import QuotaExceeded, QuotaStore
-from printer_mcp.guestbook.sanitize import RejectedText, clean_message, clean_name
+from printer_mcp.guestbook.sanitize import (
+    RejectedText,
+    clean_art,
+    clean_message,
+    clean_name,
+)
 from printer_mcp.hub_client import HubClient
 
 logger = logging.getLogger("printer.guestbook")
@@ -46,7 +51,12 @@ def _tool_description(cfg: GuestbookConfig) -> str:
         "Only call this after the guest has told you, in this conversation, both "
         "their name and what they want to say. Never invent, guess or substitute "
         "a name. If the guest will not give a name, do not call this tool. "
-        "Tell the guest the note is physical and cannot be unsent."
+        "Tell the guest the note is physical and cannot be unsent. "
+        "Set preformatted=true for ASCII art, a diagram, a table or anything "
+        "whose exact line breaks and spacing matter, and keep every line to "
+        f"{cfg.max_art_cols} characters or fewer, because the paper is that wide "
+        "and longer lines are cut off at the edge. Leave preformatted=false for "
+        "ordinary prose, which is reflowed to fit the paper."
     )
 
 
@@ -86,19 +96,29 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
                        global_per_day=cfg.global_per_day)
 
     @mcp.tool(name=cfg.tool_name, description=_tool_description(cfg))
-    async def send_message(from_name: str, message: str, ctx: Context) -> str:
+    async def send_message(
+        from_name: str, message: str, ctx: Context, preformatted: bool = False
+    ) -> str:
         """Send the guest's note to the owner's printer.
 
         Args:
             from_name: The name the guest gave for themselves, exactly as they
                 said it. Ask them if they have not said. Never invent one.
             message: What the guest wants to say, in their own words.
+            preformatted: True when the message is ASCII art, a diagram or a
+                table, so its spacing and line breaks must survive to the paper.
+                False for prose, which is reflowed to the paper width.
         """
         guest_id = _guest_id(ctx, cfg.guest_id_header)
         try:
             name = clean_name(from_name, max_chars=cfg.max_name_chars)
-            body = clean_message(message, max_chars=cfg.max_message_chars,
-                                 max_lines=cfg.max_message_lines)
+            if preformatted:
+                body = clean_art(message, max_chars=cfg.max_art_chars,
+                                 max_lines=cfg.max_art_lines,
+                                 max_cols=cfg.max_art_cols)
+            else:
+                body = clean_message(message, max_chars=cfg.max_message_chars,
+                                     max_lines=cfg.max_message_lines)
         except RejectedText as exc:
             logger.info("guestbook: rejected input from guest=%s: %s", guest_id, exc)
             return f"Not sent. {exc}"
@@ -109,7 +129,11 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
             logger.info("guestbook: quota block for guest=%s: %s", guest_id, exc)
             return f"Not sent. {exc}"
 
-        document = compose_text_document(f"Message for {cfg.owner_name}", f"From: {name}\n\n{body}")
+        title = f"Message for {cfg.owner_name}"
+        if preformatted:
+            document = compose_art_document(title, f"From: {name}", body)
+        else:
+            document = compose_text_document(title, f"From: {name}\n\n{body}")
         try:
             result = await hub.send(
                 to=[cfg.recipient_handle],
@@ -125,8 +149,8 @@ def build_app(cfg: GuestbookConfig, *, hub_client: HubClient | None = None):
 
         queued = _queued(result)
         logger.info(
-            "guestbook: guest=%s name=%s chars=%d queued=%s counts=%s",
-            guest_id, name, len(body), queued, quota.snapshot(),
+            "guestbook: guest=%s name=%s chars=%d preformatted=%s queued=%s counts=%s",
+            guest_id, name, len(body), preformatted, queued, quota.snapshot(),
         )
         if not queued:
             return (

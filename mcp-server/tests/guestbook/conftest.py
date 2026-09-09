@@ -43,6 +43,9 @@ def cfg(tmp_path) -> GuestbookConfig:
         global_per_day=3,
         max_message_chars=100,
         max_message_lines=5,
+        max_art_lines=12,
+        max_art_chars=400,
+        max_art_cols=52,
     )
 
 

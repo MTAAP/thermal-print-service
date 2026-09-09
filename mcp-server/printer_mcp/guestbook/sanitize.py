@@ -60,6 +60,42 @@ def clean_name(raw: str, *, max_chars: int) -> str:
     return name
 
 
+def clean_art(raw: str, *, max_chars: int, max_lines: int, max_cols: int) -> str:
+    """Return preformatted text with its spacing intact.
+
+    The opposite of clean_message: here the runs of spaces ARE the content, so
+    collapsing them destroys the thing being sent. Only invisible characters go,
+    and the caps become the paper budget instead.
+
+    Width is a hard limit rather than a soft one because the renderer draws each
+    line from x=0 with no wrapping, so anything past the column budget is
+    silently clipped off the right edge. Refusing is what lets the model redraw
+    it narrower; clipping just produces mangled art nobody asked for."""
+    text = _strip_invisibles(raw).replace("\t", "    ")
+    text = "\n".join(line.rstrip() for line in text.split("\n")).strip("\n")
+    if not text.strip():
+        raise RejectedText("The drawing is empty. Ask the guest what they want to send.")
+    lines = text.split("\n")
+    if len(lines) > max_lines:
+        raise RejectedText(
+            f"That drawing is {len(lines)} lines and the limit is {max_lines}. "
+            "Ask for a smaller version, or redraw it shorter."
+        )
+    widest = max(len(line) for line in lines)
+    if widest > max_cols:
+        raise RejectedText(
+            f"That drawing is {widest} characters wide and the printer fits {max_cols}. "
+            f"Anything wider gets cut off at the edge, so redraw it within {max_cols} "
+            "columns and send it again."
+        )
+    if len(text) > max_chars:
+        raise RejectedText(
+            f"That drawing is {len(text)} characters and the limit is {max_chars}. "
+            "Redraw it smaller."
+        )
+    return text
+
+
 def clean_message(raw: str, *, max_chars: int, max_lines: int) -> str:
     """Return the message body, collapsed so its printed length matches its text.
 

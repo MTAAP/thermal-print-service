@@ -37,6 +37,13 @@ class GuestbookConfig:
     max_name_chars: int = 40
     max_message_chars: int = 500
     max_message_lines: int = 20
+    # Preformatted sends get their own, larger budget: a drawing needs the room
+    # that prose does not, and 40 lines of the small font is about 8cm of paper.
+    # max_art_cols is the renderer's column budget for ascii_art at font=small,
+    # not a taste call -- wider lines are clipped, not wrapped.
+    max_art_chars: int = 1500
+    max_art_lines: int = 40
+    max_art_cols: int = 52
 
     # LibreChat substitutes {{LIBRECHAT_USER_ID}} into MCP headers, which is how
     # one chat session is told apart from another.
@@ -66,6 +73,9 @@ class GuestbookConfig:
             max_message_lines=int(
                 e.get("GUESTBOOK_MAX_MESSAGE_LINES", cls.max_message_lines)
             ),
+            max_art_chars=int(e.get("GUESTBOOK_MAX_ART_CHARS", cls.max_art_chars)),
+            max_art_lines=int(e.get("GUESTBOOK_MAX_ART_LINES", cls.max_art_lines)),
+            max_art_cols=int(e.get("GUESTBOOK_MAX_ART_COLS", cls.max_art_cols)),
             guest_id_header=e.get("GUESTBOOK_GUEST_ID_HEADER", cls.guest_id_header).lower(),
         )
 

@@ -89,3 +89,33 @@ async def test_local_client_maps_status_codes(fake_deps):
         # GET /jobs/{id} round-trips
         status = await local.get_job_status(res.local_job_id)
         assert status in {"queued", "printed", "expired", "retry_timeout", "unknown_partial"}
+
+
+def test_relay_clients_get_timeouts_longer_than_httpx_default():
+    """httpx defaults every phase to 5s, and the hosted hub exceeds that on a
+    cold call (9.0s measured from the Pi for GET /friends).
+
+    A timeout on the maintenance calls raises out of _poll_once before the inbox
+    long-poll opens, so the relay backs off without a poll and a queued job waits
+    for the next cycle instead of riding the hub's wake event. The config must
+    therefore carry its own defaults rather than inheriting httpx's."""
+    from printer.relay.config import RelayConfig
+
+    cfg = RelayConfig()
+    httpx_default_s = 5.0
+    assert cfg.hub_timeout_s > httpx_default_s
+    # Must also outlast a full long-poll, or an idle poll looks like a failure.
+    assert cfg.hub_timeout_s > cfg.long_poll_wait_s
+    # The local service renders synchronously before returning 202.
+    assert cfg.local_timeout_s > httpx_default_s
+
+
+def test_relay_timeouts_are_env_overridable():
+    from printer.relay.config import RelayConfig
+
+    cfg = RelayConfig.from_env({
+        "PRINTER_RELAY_HUB_TIMEOUT_S": "45",
+        "PRINTER_RELAY_LOCAL_TIMEOUT_S": "90",
+    })
+    assert cfg.hub_timeout_s == 45.0
+    assert cfg.local_timeout_s == 90.0

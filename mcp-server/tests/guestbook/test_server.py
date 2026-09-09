@@ -13,7 +13,7 @@ from printer_mcp.guestbook.server import build_app
 
 
 async def _call(cfg, hub, *, name: str, message: str, guest_id: str = "guest-1",
-                tool: str | None = None):
+                tool: str | None = None, preformatted: bool | None = None):
     """Open a real MCP session against the app and call the tool once."""
     app, aclose = build_app(cfg, hub_client=hub.client())
     import asyncio
@@ -38,9 +38,10 @@ async def _call(cfg, hub, *, name: str, message: str, guest_id: str = "guest-1",
         ):
                 init = await session.initialize()
                 tools = await session.list_tools()
-                result = await session.call_tool(
-                    tool or cfg.tool_name, {"from_name": name, "message": message}
-                )
+                args = {"from_name": name, "message": message}
+                if preformatted is not None:
+                    args["preformatted"] = preformatted
+                result = await session.call_tool(tool or cfg.tool_name, args)
                 return init, tools, result.content[0].text
     finally:
         server.should_exit = True
@@ -120,3 +121,60 @@ async def test_different_guests_saying_the_same_thing_are_distinct_notes(cfg, hu
     await _call(cfg, hub, name="Robin", message="hello", guest_id="g1")
     await _call(cfg, hub, name="Sam", message="hello", guest_id="g2")
     assert hub.sends[0]["idempotency_key"] != hub.sends[1]["idempotency_key"]
+
+
+CAT = "  /\\_/\\\n ( o.o )\n  > ^ <"
+
+
+async def test_preformatted_keeps_its_spacing_and_line_breaks(cfg, hub):
+    """The bug this covers: a drawing sent as prose came out as a few mangled
+    lines, because the paragraph block reflows text to the paper width and the
+    sanitiser collapsed the runs of spaces the picture is made of."""
+    _, _, text = await _call(cfg, hub, name="Robin", message=CAT, preformatted=True)
+    assert "Sent." in text
+    blocks = hub.sends[0]["document"]["blocks"]
+    art = [b for b in blocks if b["type"] == "ascii_art"]
+    assert len(art) == 1, f"expected an ascii_art block, got {[b['type'] for b in blocks]}"
+    assert art[0]["text"] == CAT
+    # The wider of the two fonts by columns, which is what art needs.
+    assert art[0]["font"] == "small"
+    # The sender still gets named, just not inside the drawing.
+    assert any(b["type"] == "paragraph" and b["text"] == "From: Robin" for b in blocks)
+
+
+async def test_prose_still_collapses_and_still_uses_a_paragraph(cfg, hub):
+    """The art path must not loosen the prose path: runs of spaces and blank
+    lines are still the cheap way to feed paper when the text is not a drawing."""
+    await _call(cfg, hub, name="Robin", message="a   b\n\n\n\nc", preformatted=False)
+    blocks = hub.sends[0]["document"]["blocks"]
+    assert [b["type"] for b in blocks] == ["header", "paragraph"]
+    assert blocks[1]["text"] == "From: Robin\n\na b\n\nc"
+
+
+async def test_art_wider_than_the_paper_is_refused_not_clipped(cfg, hub):
+    """The renderer draws each line from x=0 without wrapping, so an over-wide
+    line loses its right-hand side silently. Refusing gives the model something
+    it can act on instead."""
+    wide = "\n".join(["#" * (cfg.max_art_cols + 8)] * 3)
+    _, _, text = await _call(cfg, hub, name="Robin", message=wide, preformatted=True)
+    assert "Not sent" in text
+    assert str(cfg.max_art_cols) in text and "wide" in text
+    assert hub.sends == []
+
+
+async def test_art_gets_a_bigger_budget_than_prose(cfg, hub):
+    """Art that would be refused as prose goes through, because a drawing needs
+    lines that prose does not."""
+    tall = "\n".join(f"{'.' * 10}{i:02d}" for i in range(cfg.max_message_lines + 5))
+    _, _, refused = await _call(cfg, hub, name="Robin", message=tall, preformatted=False)
+    assert "Not sent" in refused
+    _, _, sent = await _call(cfg, hub, name="Robin", message=tall, preformatted=True)
+    assert "Sent." in sent
+
+
+async def test_art_is_still_bounded(cfg, hub):
+    """A bigger budget is still a budget: the art path is not an unlimited one."""
+    too_tall = "\n".join("x" for _ in range(cfg.max_art_lines + 5))
+    _, _, text = await _call(cfg, hub, name="Robin", message=too_tall, preformatted=True)
+    assert "Not sent" in text and "lines" in text
+    assert hub.sends == []
