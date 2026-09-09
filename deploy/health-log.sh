@@ -14,6 +14,19 @@ volts=$(vcgencmd measure_volts core 2>/dev/null | cut -d= -f2)
 mem=$(awk '/MemAvailable/ {print int($2/1024) "M"}' /proc/meminfo 2>/dev/null)
 load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
 
+# Wifi is the failure this box actually has: the link dropped three times on
+# 2026-09-09 and the last one cost 13 minutes and two hard resets. /proc/net/
+# wireless needs no package and cannot block, unlike nmcli, which talks to the
+# very daemon that may be wedged. Signal is dBm, so less negative is better and
+# anything past -80 is the edge of association. Retries and missed beacons are
+# cumulative since boot, so what matters is how fast they climb between samples.
+IFACE="${HEALTH_LOG_IFACE:-wlan0}"
+wifi=$(awk -v i="$IFACE:" '$1 == i {
+    gsub(/\./, "", $3); gsub(/\./, "", $4)
+    print "link=" $3 " signal=" $4 "dBm retries=" $9 " missed_beacon=" $11
+}' /proc/net/wireless 2>/dev/null)
+carrier=$(cat "/sys/class/net/$IFACE/operstate" 2>/dev/null)
+
 # Decode the bits that matter. 0x0 is the healthy answer; anything else is worth
 # seeing in isolation rather than as a hex blob nobody reads.
 flags=""
@@ -33,3 +46,4 @@ case "$throttled" in
 esac
 
 echo "health: throttled=${throttled:-?}${flags:+ (}${flags# }${flags:+)} temp=${temp:-?} volts=${volts:-?} mem_avail=${mem:-?} load=${load:-?}"
+echo "health: iface=$IFACE state=${carrier:-?} ${wifi:-link=? signal=? retries=? missed_beacon=?}"
