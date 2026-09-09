@@ -15,6 +15,31 @@ def _epoch(sent_at: str) -> float:
     return datetime.fromisoformat(ts).timestamp()
 
 
+def _coerce_hits(raw: object) -> dict[str, dict[str, float]]:
+    """Accept only the current {handle: {hub_job_id: epoch}} shape.
+
+    Validating at load is what keeps a bad file from becoming a crash loop. The
+    old on-disk shape was {handle: [epoch, ...]} -- a list has no .items(), so a
+    stale file used to raise AttributeError deep inside _prune, after the job had
+    already printed but before it was acked. The hub then redelivered it forever.
+    Anything that is not the current shape is dropped wholesale: the window is a
+    one-hour sliding count, so forgetting it costs at most a few extra prints,
+    while keeping it costs the relay."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"expected an object, got {type(raw).__name__}")
+    out: dict[str, dict[str, float]] = {}
+    for handle, window in raw.items():
+        if not isinstance(handle, str) or not isinstance(window, dict):
+            raise ValueError(f"handle {handle!r} maps to {type(window).__name__}, expected object")
+        slots: dict[str, float] = {}
+        for job_id, ts in window.items():
+            if not isinstance(job_id, str) or not isinstance(ts, (int, float)):
+                raise ValueError(f"handle {handle!r} has a non-(str, number) slot")
+            slots[job_id] = float(ts)
+        out[handle] = slots
+    return out
+
+
 class PerFriendRateLimiter:
     """Sliding-window N/hour/friend, evaluated against the job's immutable
     sent_at (spec 7.1). Using sent_at (not wall-clock) keeps the decision
@@ -41,14 +66,15 @@ class PerFriendRateLimiter:
         self._hits: dict[str, dict[str, float]] = {}
         if path.exists():
             try:
-                self._hits = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError, TypeError) as exc:
-                # A power cut mid-write on a Pi Zero can leave a torn rate.json.
-                # An empty window is self-healing (it just forgets recent hits),
-                # so fall back to empty rather than crash RelayClient.__init__ and
-                # let systemd crash-loop the relay until hand-repaired. Mirrors
-                # JobMap's bad-line tolerance.
-                logger.warning("relay: rate.json unreadable (%s); starting with empty window", exc)
+                self._hits = _coerce_hits(json.loads(path.read_text()))
+            except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+                # A power cut mid-write on a Pi Zero can leave a torn rate.json,
+                # and an older build persisted a different shape. An empty window
+                # is self-healing (it just forgets recent hits), so fall back to
+                # empty rather than crash RelayClient.__init__ and let systemd
+                # crash-loop the relay until hand-repaired. Mirrors JobMap's
+                # bad-line tolerance.
+                logger.warning("relay: rate.json unusable (%s); starting with empty window", exc)
                 self._hits = {}
 
     def _flush(self) -> None:

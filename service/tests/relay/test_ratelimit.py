@@ -103,3 +103,39 @@ def test_corrupt_rate_json_falls_back_to_empty(tmp_path):
     path.write_text("{not valid json")
     rl = PerFriendRateLimiter(path, per_hour=1)  # must not raise
     assert rl.allow("alice", "j1", "2026-06-03T10:00:00+00:00") is True
+
+
+def test_legacy_list_shape_does_not_crash_a_later_accept(tmp_path):
+    """A rate.json written by an older build stored {handle: [epoch, ...]}.
+
+    Loading it verbatim used to succeed and then blow up with AttributeError
+    inside _prune on the first record_accepted, which happens AFTER the job has
+    printed but BEFORE it is acked -- so the hub redelivered the job forever and
+    the relay crash-looped. The stale window is dropped instead."""
+    path = tmp_path / "rate.json"
+    path.write_text('{"laptop": [1780585724.367141, 1780586758.817175]}')
+
+    rl = PerFriendRateLimiter(path, per_hour=2)
+
+    assert _accept(rl, "timgpt", "job_a", "2026-09-09T11:43:17+00:00") is True
+    # The unusable window was dropped, so laptop starts from a clean slate too.
+    assert _accept(rl, "laptop", "job_b", "2026-09-09T11:43:18+00:00") is True
+
+
+def test_unusable_rate_file_shapes_start_empty(tmp_path):
+    for raw in ('[]', '{"laptop": 3}', '{"laptop": {"j1": "not-a-number"}}'):
+        path = tmp_path / "rate.json"
+        path.write_text(raw)
+        rl = PerFriendRateLimiter(path, per_hour=1)
+        assert _accept(rl, "laptop", "j-new", "2026-09-09T11:43:17+00:00") is True
+
+
+def test_current_shape_still_loads(tmp_path):
+    """The coercion must not throw away a good file -- a persisted slot still counts."""
+    path = tmp_path / "rate.json"
+    path.write_text('{"laptop": {"j1": 1789000000.0}}')
+    rl = PerFriendRateLimiter(path, per_hour=1)
+    # j1 is inside the hour before sent_at, so the one slot is already spent.
+    from datetime import UTC, datetime
+    sent_at = datetime.fromtimestamp(1789000600.0, UTC).isoformat()
+    assert _accept(rl, "laptop", "j2", sent_at) is False
