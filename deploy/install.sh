@@ -110,4 +110,13 @@ $SUDO systemctl restart systemd-journald
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now io-stall-watchdog.service
 
+# Boot-time guard against an empty Wi-Fi profile (see deploy/wifi-profile-guard.sh).
+# Enabled for the next boot only (it runs before sysinit.target); a no-op while a
+# profile is present.
+echo "==> install Wi-Fi profile guard"
+$SUDO install -m 0755 deploy/wifi-profile-guard.sh /usr/local/sbin/wifi-profile-guard.sh
+$SUDO install -m 0644 deploy/wifi-profile-guard.service /etc/systemd/system/wifi-profile-guard.service
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable wifi-profile-guard.service
+
 echo "==> done. Reboot once for lp group to take effect, or open a new login shell."

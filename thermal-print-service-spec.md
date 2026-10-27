@@ -471,6 +471,7 @@ What gets printed, when, and from which sources is **explicitly out of scope for
 | Failure | Behavior |
 |---|---|
 | Pi offline (WiFi flake) | Sender retries with backoff; gives up after 30min, logs failure |
+| Wi-Fi profile lost (netplan file empty or missing) | `wifi-profile-guard.service` runs before NetworkManager at boot, restores the profile from the boot partition's cloud-init `network-config`, and regenerates the NetworkManager keyfiles; it logs the restore and never fails the boot |
 | Queue full (`max_queue_depth` exceeded) | `503` with `{ "reason": "queue_full" }`; sender backs off and retries |
 | Printer USB disconnected | Accepted jobs stay in durable queue and retry every 5min; `/healthz` returns `printer_connected: false` or `null` if unsupported |
 | Paper out | Job stays in queue, retried every 5min until `options.expires_at` (status `expired`) or, if unset, until `max_retry_age` (status `retry_timeout`) |

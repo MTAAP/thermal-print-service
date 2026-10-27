@@ -22,7 +22,7 @@ Hardware: a Raspberry Pi (Zero 2 W or similar) attached over USB to a NetumScan 
 
 The two scripts in [`deploy/`](./deploy) are idempotent and meant to be re-run safely. Defaults target the maintainer's Pi, but the important paths are configurable with environment variables.
 
-**One-time provisioning** (apt deps, `thermalprinter` user, `lp` group, app directory, venv, `/var/lib/printer/` state dirs, systemd unit). Run **on the Pi**:
+**One-time provisioning** (apt deps, `thermalprinter` user, `lp` group, app directory, venv, `/var/lib/printer/` state dirs, systemd units, the I/O-stall host watchdog, and the boot-time Wi-Fi profile guard). Run **on the Pi**:
 
 ```bash
 git clone https://github.com/MTAAP/thermal-print-service.git
