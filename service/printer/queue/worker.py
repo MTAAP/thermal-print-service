@@ -345,6 +345,7 @@ class PrintWorker:
                     self._retry_after.pop(job_id, None)
                     return True
                 # First chunk failed, no paper consumed: retryable.
+                self._in_flight = None
                 now = time.time()
                 first = self._first_seen.setdefault(job_id, now)
                 if (now - first) > self._d.max_retry_age_s:
