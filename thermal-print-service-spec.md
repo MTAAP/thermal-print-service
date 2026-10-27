@@ -199,6 +199,8 @@ Response: `{ "blocks": [...], "renderer_version": "1.4.2", "changelog_url": "...
 
 Recent job log: `id`, `sender`, `document_type`, `queued_at`, `printed_at`, `status`, `paper_used_mm`, `renderer_version` (the renderer that produced the original output), `reprint_mode` (`"png_cached"` if the rendered PNG is still in the 7-day cache; `"json_rerender"` if it'll be re-rendered from stored JSON).
 
+`status` is the job's latest log event: `queued` (accepted, not yet attempted), `held` (waiting for `not_before`), `printing` (chunks are going to the printer), `retry` (the last attempt failed before any paper moved), or one of the terminal states `printed`, `expired`, `retry_timeout`, `unknown_partial`.
+
 Each entry exposes a `reprint_url` pointing to `POST /jobs/{job_id}/reprint`. By default reprint uses `png_cached` when available (byte-exact replay — for the "cat knocked the paper" case). Append `?force=json` to re-render from JSON at the **current** renderer version (useful when typography has improved since the original print and you want to see the new look). If the cached PNG is evicted between listing and reprint, the service falls back to JSON re-render; if both JSON and PNG are gone, it returns `410 Gone`.
 
 ### `GET /jobs/{job_id}`
@@ -219,7 +221,7 @@ endpoint returns `410`.
 - **Active jobs and 24h idempotency records** are excluded from ring-buffer eviction. Eviction only applies to terminal jobs older than their idempotency TTL.
 - Both caps are tunable via service config.
 
-Disk-wear rule: acceptance writes the JSON job record and rendered PNG once, and terminal status writes once. Retry events are append-only JSONL records; log pruning drops oldest terminal-job history while preserving pending work.
+Disk-wear rule: acceptance writes the JSON job record and rendered PNG once, and terminal status writes once. Each print attempt appends one `printing` record before the first chunk, and each failed attempt appends one `retry` record; log pruning drops oldest terminal-job history while preserving pending work.
 
 ### `GET /metrics`
 
@@ -480,8 +482,8 @@ What gets printed, when, and from which sources is **explicitly out of scope for
 | Malformed or oversized `/print/raw` PNG | Malformed PNG returns 400; width/height/byte cap violations return 413; nothing is queued |
 | Job exceeds `max_length_mm` | 400 before any paper is consumed |
 | Render exceeds memory/time/height guard | Request fails before durable acceptance; response is 413 for configured size guards or 503 if the render worker is unhealthy |
-| Service restart after 202 | Durable job log is replayed; pending/retry jobs keep original order |
-| Crash or USB failure after bytes were sent | Job is marked `unknown_partial` and is not auto-reprinted, because the service cannot know how much paper was consumed |
+| Service restart after 202 | Durable job log is replayed; queued/retry jobs keep original order |
+| Crash or USB failure after bytes were sent | Job is marked `unknown_partial` and is not auto-reprinted, because the service cannot know how much paper was consumed. A USB I/O error is caught in the worker. For a crash or power loss, the worker's fsynced `printing` record is still the job's latest event on restart, and replay marks the job `unknown_partial` instead of re-enqueueing it |
 | Cache eviction race during reprint | Falls back from cached PNG to JSON re-render; if both artifacts are gone, returns `410 Gone` |
 | Pi clock unsynchronized | `/healthz.clock_synchronized` is false; worker does not expire jobs on `expires_at` until time sync returns, avoiding false stale drops |
 | Renderer bug for new block type | Caught in CI via `/test` endpoint sample; fallback to "[unsupported block]" placeholder rather than failing the whole job |
