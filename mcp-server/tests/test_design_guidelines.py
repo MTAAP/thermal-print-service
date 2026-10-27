@@ -14,7 +14,7 @@ def test_get_design_guidelines_appears_in_tool_list(cfg, sample_schema_payload):
             return httpx.Response(200, json=sample_schema_payload)
         return httpx.Response(404)
 
-    server, cache, _, _ = build_with_handler(cfg, handler)
+    server, cache, _ = build_with_handler(cfg, handler)
     asyncio.run(cache.boot(retry_budget_s=0.5))
 
     tools = list_tools(server)
@@ -37,7 +37,7 @@ def test_call_get_design_guidelines_returns_static_payload(cfg, sample_schema_pa
             return httpx.Response(200, json=sample_schema_payload)
         return httpx.Response(404)
 
-    server, cache, _, _ = build_with_handler(cfg, handler)
+    server, cache, _ = build_with_handler(cfg, handler)
     asyncio.run(cache.boot(retry_budget_s=0.5))
 
     content = call_tool(server, "get_design_guidelines", {})

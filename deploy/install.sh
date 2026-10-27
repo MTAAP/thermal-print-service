@@ -78,11 +78,7 @@ as_service_user "${APP_DIR}/.venv/bin/pip" install -e "${APP_DIR}/printer-core"
 as_service_user "${APP_DIR}/.venv/bin/pip" install -e "${APP_DIR}/service"
 
 echo "==> install systemd units"
-# printer.service (the print service) is always installed; printer-relay.service
-# (the friend-network relay) is installed but stays DISABLED until the operator
-# joins a hub -- `printer-svc relay run` exits if there are no creds, so enabling
-# it before `printer-svc hub join` would just crash-loop.
-for unit in printer.service printer-relay.service; do
+for unit in printer.service; do
   UNIT_TMP="$(mktemp)"
   sed \
     -e "s|User=thermalprinter|User=${SERVICE_USER}|g" \
@@ -115,5 +111,3 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now io-stall-watchdog.service
 
 echo "==> done. Reboot once for lp group to take effect, or open a new login shell."
-echo "    To join the friend network: printer-svc hub join <code> --handle <h> --display-name <n>"
-echo "    Then: sudo systemctl enable --now printer-relay.service"
