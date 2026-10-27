@@ -1,0 +1,6 @@
+[Unit]
+Description=Sample Pi board health into the journal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/health-log.sh
