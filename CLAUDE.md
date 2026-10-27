@@ -59,7 +59,7 @@ make service-test    # service/.venv/bin/python -m pytest service/tests
 make mcp-test        # mcp-server/.venv/bin/python -m pytest mcp-server/tests
 ```
 
-`make verify` is the gate. CI (`.github/workflows/ci.yml`) runs the same package commands across Python 3.11 and 3.13.
+`make verify` is the gate. CI (`.github/workflows/ci.yml`) runs the same package commands across Python 3.11 and 3.13, and on pull requests and `main` it also runs the slow design tests (`make verify-all` locally).
 
 ### Running the service locally
 
@@ -114,7 +114,7 @@ The block schema is **a single living contract** — there is no schema version 
 - **`auto_cut` is per-job, not per-document.** Multi-section prints use `cut` blocks (spec §8), not separate POSTs.
 - **`expires_at` vs. `max_retry_age_s`.** Sender deadline → `status: "expired"`. Service self-protection ceiling (default 24h) → `status: "retry_timeout"`. Don't conflate them.
 - **Clock-sync gates expiry.** Expiry checks are suspended while the Pi clock is unsynchronized (spec §11) — a job whose `expires_at` already passed won't be dropped until the clock re-syncs.
-- **Two `pyproject.toml`s, two `mypy` configs.** Linter/typecheck settings live per-package. Don't add config to a phantom root `pyproject.toml`.
+- **One `pyproject.toml` and `mypy` config per package.** Linter/typecheck settings live per-package. Don't add config to a phantom root `pyproject.toml`.
 
 ## Public repo hygiene
 

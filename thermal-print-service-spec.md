@@ -51,7 +51,7 @@ The whole assembly is a self-contained appliance. Plug in, connect to WiFi once,
 ┌─────────────────────────────────────────────────────────────┐
 │ Pi Zero 2 W: "print.tailnet"                                │
 │   ┌─────────────────────────────────────────────────────┐   │
-│   │ FastAPI app (systemd unit, runs as `printer` user)  │   │
+│   │ FastAPI app (systemd unit, user `thermalprinter`)   │   │
 │   │                                                     │   │
 │   │ Endpoints:                                          │   │
 │   │   POST /print          → accept JSON document       │   │
@@ -175,7 +175,7 @@ The raw path uses fixed job options: `auto_cut=true`, `feed_lines_after=2`, `max
 
 Returns the **current** block schema as JSON — there is no schema version. The schema is a single living contract, refactored in lockstep with senders (§6, "Schema evolution"). Self-documenting: agents and the MCP server introspect at runtime; senders pinned at build-time stay in lockstep with the renderer or fail loudly via the 400 contract above.
 
-Response: `{ "blocks": [...], "renderer_version": "1.4.2", "changelog_url": "..." }`
+Response: `{ "blocks": {...}, "block_types": [...], "renderer_version": "0.10.2", "changelog_url": "..." }`. `blocks` is the JSON Schema of a whole document (`$defs`, `properties`, `required`), and `block_types` lists the block type names.
 
 ### `GET /healthz`
 
@@ -455,12 +455,12 @@ What gets printed, when, and from which sources is **explicitly out of scope for
 - python-escpos (USB transport)
 - Pillow (block rendering, vector-text 2× → Atkinson dither pipeline)
 - qrcode + python-barcode (for `qr` and `barcode` blocks)
-- systemd unit, runs as non-root `printer` user
+- systemd unit, runs as the non-root `thermalprinter` user (`SERVICE_USER` in `deploy/install.sh`)
 - Tailscale (already installed)
 
 **Fonts (bundled with the service, not system-installed):**
-- **JetBrains Mono** (TTF, Regular + Bold) — body text, code blocks, and monospace value alignment
-- **IBM Plex Sans** (TTF, Medium + Bold) — display
+- **IBM Plex Sans** (TTF, Medium + Bold) — prose body and display
+- **JetBrains Mono** (TTF, Regular + Bold) — code blocks, `kv` values, `table_compact` cells and bullet markers
 - **Noto Sans SC** (OTF, Regular + Bold) — CJK fallback
 - **Spleen** (BDF, 8x16 + 5x8) — ASCII art grid fonts
 

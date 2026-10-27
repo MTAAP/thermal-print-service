@@ -103,4 +103,4 @@ make lint      # ruff
 make typecheck # mypy
 ```
 
-CI runs the same package gates across Python 3.11 and 3.13.
+CI runs the same package gates across Python 3.11 and 3.13, plus the slow design tests on pull requests and `main` (`make verify-all` locally).
