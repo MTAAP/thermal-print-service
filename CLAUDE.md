@@ -17,7 +17,7 @@ Tailnet-attached thermal receipt printer. JSON-in, paper-out HTTP service runnin
 | `mcp-server/` | MCP adapter wrapping the HTTP API as agent tools (Claude Code, Claude Desktop, Codex CLI, OpenClaw). |
 | `design/` | Local CLI (`tprint-design`) compiling HTML+CSS into thermal-ready 1-bit PNGs. Runs on the user's laptop via Playwright + headless Chromium. Sends final PNG to the Pi via `/print/raw`. See [`design/SKILL.md`](design/SKILL.md). |
 | `printer-core/` | Shared library: Atkinson dither + thermal constants used by both `service/` and `design/`. |
-| `deploy/` | Idempotent Pi provisioning (`install.sh`), laptop → Pi sync (`sync.sh`), Tailscale HTTPS (`tailscale-serve.sh`), systemd unit. |
+| `deploy/` | Idempotent Pi provisioning (`install.sh`), laptop → Pi sync (`sync.sh`), Tailscale HTTPS (`tailscale-serve.sh`), systemd units, I/O-stall watchdog, Wi-Fi profile guard (`wifi-profile-guard.sh`). |
 | `assets/fonts/` | Bundled font stack: IBM Plex Sans, JetBrains Mono, Noto Sans SC, Spleen. Loaded by `FontRegistry` via `assets/fonts/` (paths resolved from repo root in tests via `REPO_ROOT`). |
 | `assets/test-pages/test-page.json` | Document used by `POST /test` and the literary-frame regression. |
 

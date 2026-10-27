@@ -1,0 +1,19 @@
+[Unit]
+Description=Restore the Wi-Fi netplan profile if it is missing or empty
+Documentation=https://github.com/MTAAP/thermal-print-service
+# Early boot, before basic.target: netplan generate starts the auxiliary units it
+# writes (such as netplan-regdom.service) only while the system is initializing.
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target network-pre.target NetworkManager.service shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-profile-guard.sh
+# A oneshot has no start timeout by default; a hung sync or generate must not hold the boot.
+TimeoutStartSec=60
+
+[Install]
+WantedBy=sysinit.target
