@@ -120,7 +120,17 @@ class PrintWorker:
         self._retry_after: dict[str, float] = {}
 
     async def start(self) -> None:
+        in_flight = set(self._d.joblog.in_flight_after_replay())
         for rec in self._d.joblog.pending_after_replay():
+            if rec.job_id in in_flight:
+                # Spec §11: the crash or power loss hit after ``printing`` was
+                # logged, so chunks may already be on paper. Replaying would
+                # risk printing the job twice; the operator reprints instead.
+                self._d.joblog.append(JobRecord.unknown_partial(
+                    job_id=rec.job_id,
+                    detail="in flight at restart; paper may have moved",
+                ))
+                continue
             # Seed ``_first_seen`` from the durable accepted timestamp, but
             # anchor scheduled jobs at eligibility so a future ``not_before``
             # does not burn retry budget before the job can print.
@@ -272,6 +282,9 @@ class PrintWorker:
         n = len(chunks)
         chunks_printed = 0
         paper_total = 0
+        # Fsynced before any byte reaches the printer; see
+        # ``JobLog.in_flight_after_replay`` for how startup reads it.
+        self._d.joblog.append(JobRecord.printing(job_id=job_id))
         # Per-chunk failure semantics (advisor-flagged correctness trap):
         # once any chunk has hit the printer, paper has been consumed and
         # the cutter has likely fired. A later chunk failing — for ANY

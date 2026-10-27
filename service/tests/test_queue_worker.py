@@ -467,6 +467,138 @@ async def test_worker_preserves_retry_age_across_restart(state_dir):
     assert events.count("retry") == 0
 
 
+@pytest.mark.asyncio
+async def test_worker_logs_printing_before_first_chunk(state_dir):
+    """The in-flight marker must be durable before any byte reaches the
+    transport, or a crash mid-send would look like a never-started job."""
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    seen_at_send: list[list[str]] = []
+
+    class RecordingTransport(FakeTransport):
+        async def print_png(self, png: bytes, *, auto_cut: bool,
+                            feed_lines_after: int) -> int:
+            seen_at_send.append([r.event for r in log.replay()])
+            return await super().print_png(
+                png, auto_cut=auto_cut, feed_lines_after=feed_lines_after,
+            )
+
+    job_id = "JOB-MARKER"
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.1.0",
+    ))
+    cache.put_chunks(job_id, [b"A", b"B"])
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=RecordingTransport(),
+                      retry_interval_s=0.05, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=lambda j: DEFAULT_OPTIONS)
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    assert seen_at_send[0] == ["accepted", "printing"]
+    assert [r.event for r in log.replay()] == ["accepted", "printing", "printed"]
+
+
+@pytest.mark.asyncio
+async def test_worker_marks_in_flight_job_unknown_partial_on_restart(state_dir):
+    """Spec §11: a crash or power loss after chunks started going to the
+    printer must not replay the job. Its latest event is still ``printing``,
+    so ``start()`` ends it as ``unknown_partial`` with no transport call."""
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    job_id = "JOB-CRASHED"
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.1.0",
+    ))
+    log.append(JobRecord.printing(job_id=job_id))
+    cache.put_chunks(job_id, [b"X"])
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.05, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=make_options_lookup(options_from_replay(log)))
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    records = list(log.replay())
+    assert [r.event for r in records] == ["accepted", "printing", "unknown_partial"]
+    assert records[-1].detail == "in flight at restart; paper may have moved"
+    assert transport.calls == []
+    assert log.pending_after_replay() == []
+
+
+@pytest.mark.asyncio
+async def test_in_flight_recovery_survives_torn_log_tail(state_dir):
+    """Power loss can tear the in-flight job's ``printed`` write. Recovery
+    must still mark it ``unknown_partial`` and print only the next job."""
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    for job_id in ("JOB-A", "JOB-B"):
+        log.append(JobRecord.accepted(
+            job_id=job_id, sender=None, document_type="t",
+            idempotency_key=None, payload_hash=job_id, kind="raw",
+            estimated_paper_mm=10, renderer_version="0.1.0",
+        ))
+    cache.put_chunks("JOB-A", [b"A"])
+    cache.put_chunks("JOB-B", [b"B"])
+    log.append(JobRecord.printing(job_id="JOB-A"))
+    with open(state_dir / "log.jsonl", "a", encoding="utf-8") as f:
+        f.write('{"event": "printed", "job_id": "JOB-A", "ts": "2026-')
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.05, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=make_options_lookup(options_from_replay(log)))
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    assert transport.payloads == [b"B"]
+    assert [(r.job_id, r.event) for r in log.replay() if r.event != "accepted"] == [
+        ("JOB-A", "printing"), ("JOB-A", "unknown_partial"),
+        ("JOB-B", "printing"), ("JOB-B", "printed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_worker_requeues_retrying_job_on_restart(state_dir):
+    """A job whose last attempt ended in ``retry`` never put paper through,
+    so a restart replays it as before."""
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    job_id = "JOB-RETRYING"
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.1.0",
+    ))
+    log.append(JobRecord.printing(job_id=job_id))
+    log.append(JobRecord.retry(job_id=job_id, detail="printer offline"))
+    cache.put_chunks(job_id, [b"X"])
+
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.05, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=make_options_lookup(options_from_replay(log)))
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    assert transport.payloads == [b"X"]
+    assert [r.event for r in log.replay()] == [
+        "accepted", "printing", "retry", "printing", "printed",
+    ]
+
+
 def test_options_from_replay_rebuilds_persisted_options(state_dir):
     """Spec §11 + Codex P1: the worker must honor per-job options after a
     crash/restart. ``cmd_run`` rebuilds ``options_store`` by replaying the

@@ -118,9 +118,17 @@ class JobLog:
         return json.dumps({k: v for k, v in asdict(record).items() if v is not None})
 
     def append(self, record: JobRecord) -> None:
-        line = self._serialize(record)
-        with open(self._path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        data = (self._serialize(record) + "\n").encode("utf-8")
+        with open(self._path, "ab+") as f:
+            # Power loss mid-append can leave a torn final line with no
+            # newline. Writing straight after it would fuse both into one
+            # unparseable line, and replay would drop this record too.
+            # Terminate the fragment so only it is lost.
+            if f.seek(0, os.SEEK_END) > 0:
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    data = b"\n" + data
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
 
@@ -150,6 +158,21 @@ class JobLog:
                 terminated.add(r.job_id)
         return [accepted[jid] for jid in order
                 if jid in accepted and jid not in terminated]
+
+    def in_flight_after_replay(self) -> list[str]:
+        """Pending job ids whose latest event is ``printing``, in arrival order.
+
+        The worker logs ``printing`` right before a job's first chunk goes to
+        the transport, and every attempt ends in a terminal event or
+        ``retry``. A pending job still at ``printing`` therefore means the
+        process died mid-send: paper may already have moved.
+        """
+        latest: dict[str, str] = {}
+        for r in self.replay():
+            if r.event != "accepted":
+                latest[r.job_id] = r.event
+        return [r.job_id for r in self.pending_after_replay()
+                if latest.get(r.job_id) == "printing"]
 
     def prune(self, *, max_records: int, max_bytes: int) -> None:
         """Drop records for the oldest terminal jobs until under both limits.

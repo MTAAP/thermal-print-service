@@ -3,6 +3,19 @@
 Each removal/rename gets a one-line entry with the renderer version it landed in
 and the migration hint surfaced in 400 responses.
 
+## v0.10.1
+
+A crash or power loss mid-print no longer reprints the job on restart.
+
+- The worker appends a durable `printing` event right before a job's first
+  chunk goes to the printer. `GET /jobs` shows `status: "printing"` while
+  chunks are being sent.
+- On startup, a pending job whose latest event is still `printing` is marked
+  `unknown_partial` (detail `in flight at restart; paper may have moved`)
+  instead of being re-enqueued. Before this, such a job replayed in full,
+  which contradicted spec §11. Jobs whose last attempt ended in `retry`
+  replay as before.
+
 ## v0.10.0
 
 Scheduled print support via `options.not_before`.

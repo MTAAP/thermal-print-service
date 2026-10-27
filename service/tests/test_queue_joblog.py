@@ -41,6 +41,19 @@ def test_replay_skips_corrupt_lines(state_dir):
     assert [r.event for r in replayed] == ["accepted", "printed"]
 
 
+def test_append_after_torn_tail_keeps_new_record(state_dir):
+    """A crash mid-append leaves a final line with no newline. The next
+    append must land on its own line so replay loses only the fragment."""
+    p = state_dir / "log.jsonl"
+    log = JobLog(p)
+    log.append(JobRecord.printing(job_id="A"))
+    with open(p, "a", encoding="utf-8") as f:
+        f.write('{"event": "printed", "job_id": "A", "ts": "2026-')
+    log.append(JobRecord.unknown_partial(job_id="A", detail="in flight at restart"))
+
+    assert [r.event for r in log.replay()] == ["printing", "unknown_partial"]
+
+
 def test_pending_set_after_replay(state_dir):
     log = JobLog(state_dir / "log.jsonl")
     log.append(JobRecord.accepted(job_id="A", sender=None, document_type="t",
@@ -53,6 +66,26 @@ def test_pending_set_after_replay(state_dir):
 
     pending = log.pending_after_replay()
     assert [j.job_id for j in pending] == ["B"]
+
+
+def test_in_flight_after_replay_is_pending_jobs_still_printing(state_dir):
+    """Only a pending job whose latest event is ``printing`` counts as in
+    flight. A later ``retry`` or terminal event means the attempt ended."""
+    log = JobLog(state_dir / "log.jsonl")
+    for jid in ("CRASHED", "RETRIED", "DONE", "WAITING", "CRASHED-2"):
+        log.append(JobRecord.accepted(job_id=jid, sender=None, document_type="t",
+                                      idempotency_key=None, payload_hash="x",
+                                      kind="document", estimated_paper_mm=1,
+                                      renderer_version="0.1.0"))
+    log.append(JobRecord.printing(job_id="CRASHED"))
+    log.append(JobRecord.printing(job_id="RETRIED"))
+    log.append(JobRecord.retry(job_id="RETRIED", detail="printer offline"))
+    log.append(JobRecord.printing(job_id="DONE"))
+    log.append(JobRecord.printed(job_id="DONE", paper_used_mm=10))
+    log.append(JobRecord.retry(job_id="CRASHED-2", detail="printer offline"))
+    log.append(JobRecord.printing(job_id="CRASHED-2"))
+
+    assert log.in_flight_after_replay() == ["CRASHED", "CRASHED-2"]
 
 
 def _accepted(jid: str, ts: str) -> JobRecord:
