@@ -8,7 +8,6 @@ from mcp.server.stdio import stdio_server
 
 from printer_mcp.client import PrintServiceClient
 from printer_mcp.config import McpConfig
-from printer_mcp.hub_client import HubClient
 from printer_mcp.schema_cache import SchemaCache
 from printer_mcp.server import build_server
 
@@ -16,22 +15,19 @@ from printer_mcp.server import build_server
 async def _run() -> None:
     cfg = McpConfig.from_env()
     client = PrintServiceClient(cfg)
-    hub_client = HubClient(cfg)
     cache = SchemaCache(client)
 
     # Best-effort boot fetch. If the Pi is unreachable we still start the
     # server so Claude Desktop's "MCP server failed to launch" UX never
-    # fires just because the printer is asleep. The hub client does no boot
-    # fetch -- the friend tools list unconditionally and fail loudly per-call.
+    # fires just because the printer is asleep.
     await cache.boot(retry_budget_s=cfg.schema_boot_retry_s)
 
-    server = build_server(cfg, client, cache, hub_client)
+    server = build_server(client, cache)
     try:
         async with stdio_server() as (read, write):
             await server.run(read, write, server.create_initialization_options())
     finally:
         await client.aclose()
-        await hub_client.aclose()
 
 
 def main() -> int:

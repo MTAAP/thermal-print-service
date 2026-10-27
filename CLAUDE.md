@@ -17,7 +17,6 @@ Tailnet-attached thermal receipt printer. JSON-in, paper-out HTTP service runnin
 | `mcp-server/` | MCP adapter wrapping the HTTP API as agent tools (Claude Code, Claude Desktop, Codex CLI, OpenClaw). |
 | `design/` | Local CLI (`tprint-design`) compiling HTML+CSS into thermal-ready 1-bit PNGs. Runs on the user's laptop via Playwright + headless Chromium. Sends final PNG to the Pi via `/print/raw`. See [`design/SKILL.md`](design/SKILL.md). |
 | `printer-core/` | Shared library: Atkinson dither + thermal constants used by both `service/` and `design/`. |
-| `hub/` | Public relay hub for the friend network. `printer-hub` runtime, web console templates/static assets, and Railway Docker image. |
 | `deploy/` | Idempotent Pi provisioning (`install.sh`), laptop → Pi sync (`sync.sh`), Tailscale HTTPS (`tailscale-serve.sh`), systemd unit. |
 | `assets/fonts/` | Bundled font stack: IBM Plex Sans, JetBrains Mono, Noto Sans SC, Spleen. Loaded by `FontRegistry` via `assets/fonts/` (paths resolved from repo root in tests via `REPO_ROOT`). |
 | `assets/test-pages/test-page.json` | Document used by `POST /test` and the literary-frame regression. |
@@ -25,24 +24,22 @@ Tailnet-attached thermal receipt printer. JSON-in, paper-out HTTP service runnin
 `service/printer/` packages:
 `schema/` (pydantic models) → `render/` (PIL pipeline, `blocks/`, `typography`, `dither`) → `queue/` (durable joblog, idempotency, PNG cache, worker) → `transport/` (python-escpos over `/dev/usb/lp0`). `app.py` wires them into FastAPI; `cli/main.py` exposes `run`, `calibrate`, `test-print`.
 
-## Five venvs — important
+## Four venvs — important
 
-The repo has **five separate Python packages**, each with its own `pyproject.toml` and `.venv`:
+The repo has **four separate Python packages**, each with its own `pyproject.toml` and `.venv`:
 
 - `printer-core/.venv/` — installs `printer-core/` as the `thermal-printer-core` distribution (shared dither + constants)
 - `service/.venv/` — installs `service/` (depends on editable `thermal-printer-core` from `printer-core/`)
 - `mcp-server/.venv/` — installs `mcp-server/`
-- `hub/.venv/` — installs `hub/` (dev install for tests/lint/typecheck; Railway uses `pip install -c constraints.txt .`)
 - `design/.venv/` — installs `design/` (depends on editable `thermal-printer-core` from `printer-core/`; pulls Playwright + Chromium)
 
-The top-level `Makefile` targets all five. Don't install one package's deps into the other's venv.
+The top-level `Makefile` targets all four. Don't install one package's deps into the other's venv.
 
 ```bash
 # First-time setup
 python3 -m venv printer-core/.venv && printer-core/.venv/bin/pip install -e 'printer-core[dev]'
 python3 -m venv service/.venv && service/.venv/bin/pip install -e ./printer-core && service/.venv/bin/pip install -e 'service[dev]'
 python3 -m venv mcp-server/.venv && mcp-server/.venv/bin/pip install -e 'mcp-server[dev]'
-python3 -m venv hub/.venv && hub/.venv/bin/pip install -e 'hub[dev]'
 python3 -m venv design/.venv && design/.venv/bin/pip install -e ./printer-core && design/.venv/bin/pip install -e 'design[dev]' && design/.venv/bin/playwright install chromium
 ```
 
@@ -60,10 +57,9 @@ make typecheck       # mypy across the package venvs
 # Per-package
 make service-test    # service/.venv/bin/python -m pytest service/tests
 make mcp-test        # mcp-server/.venv/bin/python -m pytest mcp-server/tests
-make hub-test        # cd hub && .venv/bin/python -m pytest tests
 ```
 
-`make verify` is the gate. CI (`.github/workflows/ci.yml`) runs the same package commands across Python 3.11 and 3.13, plus a non-editable hub runtime install smoke using `hub/constraints.txt` to mirror the Railway image path.
+`make verify` is the gate. CI (`.github/workflows/ci.yml`) runs the same package commands across Python 3.11 and 3.13.
 
 ### Running the service locally
 
@@ -83,12 +79,6 @@ REMOTE=printer.your-tailnet.ts.net ./deploy/sync.sh # override SSH alias
 ```
 
 `sync.sh` defaults to the `pi-printer-lan` SSH alias. The Pi runs the service as the `thermalprinter` user under `systemd` (unit at `deploy/printer.service`); state lives in `/var/lib/printer/{jobs,cache,idempotency}`.
-
-### Deploying the hub (Railway)
-
-**The hub does NOT auto-deploy on push.** Because this repo is public, the Railway GitHub auto-deploy is intentionally OFF — merging to `main` does **not** redeploy the hub. The supported manual path is `HUB_URL=https://hub.example.invalid make deploy-hub`: the target writes the local git SHA to ignored `hub/build_info.txt`, runs `railway up --ci` from `hub/`, then polls `${HUB_URL}/healthz` until the running hub reports the same `git_sha`. Config is `hub/railway.json` (Dockerfile builder, healthcheck `/healthz`) + `hub/Dockerfile` (runtime install via `pip install -c constraints.txt .`).
-
-Consequence for coordinated hub+relay changes: a `git push` / merge updates the code but not the running hub, so deploy with `make deploy-hub` and wait for the SHA match **before** syncing dependent relay changes to the Pi — otherwise a new relay can talk to an old hub. `deploy/sync.sh` also checks `${HUB_URL}/healthz` when `HUB_URL` is set and requires `SYNC_ANYWAY=1` to override a mismatch.
 
 ## Architecture invariants
 
