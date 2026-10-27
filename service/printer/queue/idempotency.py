@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from .jsonl import append_line
 
 
 class IdempotencyConflict(Exception):
@@ -72,7 +73,4 @@ class IdempotencyCache:
             "scope": sk, "key": key, "payload_hash": payload_hash,
             "job_id": job_id, "queued_at": queued_at, "recorded_at": recorded_at,
         })
-        with open(self._path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        append_line(self._path, line)

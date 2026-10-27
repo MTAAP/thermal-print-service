@@ -118,6 +118,8 @@ class PrintWorker:
         self._stop = asyncio.Event()
         self._first_seen: dict[str, float] = {}
         self._retry_after: dict[str, float] = {}
+        self._in_flight: str | None = None
+        self._unsettled: set[str] = set()
 
     async def start(self) -> None:
         in_flight = set(self._d.joblog.in_flight_after_replay())
@@ -166,13 +168,22 @@ class PrintWorker:
                 self._schedule_hold_wakeup(wakeup_s)
                 continue
             self._cancel_hold_wakeup()
+            self._in_flight = None
             try:
                 completed = await self._handle(selected)
             except Exception as exc:
-                self._d.joblog.append(JobRecord.retry(
-                    job_id=selected, detail=f"unexpected: {exc!r}"
-                ))
-                completed = False
+                if self._in_flight == selected:
+                    # Paper may have moved, and the record that would settle
+                    # the job failed to write. ``retry`` would print it again;
+                    # leave ``printing`` as its latest event so startup ends it
+                    # as ``unknown_partial``, and stop selecting it until then.
+                    self._unsettled.add(selected)
+                    completed = True
+                else:
+                    self._d.joblog.append(JobRecord.retry(
+                        job_id=selected, detail=f"unexpected: {exc!r}"
+                    ))
+                    completed = False
             if completed:
                 next_job, next_wakeup_s = self._select_next_eligible()
                 if next_job is not None:
@@ -188,6 +199,8 @@ class PrintWorker:
     def _select_next_eligible(self) -> tuple[str | None, float | None]:
         earliest_wakeup_s: float | None = None
         for rec in self._d.joblog.pending_after_replay():
+            if rec.job_id in self._unsettled:
+                continue
             retry_wakeup_s = self._retry_wakeup_delay(rec.job_id)
             if retry_wakeup_s is not None:
                 if earliest_wakeup_s is None:
@@ -285,6 +298,7 @@ class PrintWorker:
         # Fsynced before any byte reaches the printer; see
         # ``JobLog.in_flight_after_replay`` for how startup reads it.
         self._d.joblog.append(JobRecord.printing(job_id=job_id))
+        self._in_flight = job_id
         # Per-chunk failure semantics (advisor-flagged correctness trap):
         # once any chunk has hit the printer, paper has been consumed and
         # the cutter has likely fired. A later chunk failing — for ANY

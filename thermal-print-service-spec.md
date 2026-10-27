@@ -195,6 +195,8 @@ Response: `{ "blocks": [...], "renderer_version": "1.4.2", "changelog_url": "...
 
 `printer_connected`, `paper_present`, and `cover_closed` are `true`, `false`, or `null` when this printer/transport cannot report the signal reliably. Phase 1 pins the actual status capability; unsupported hardware states are surfaced as `null` and worker failures collapse to `printer_unavailable`.
 
+`last_error` is the detail of the latest `retry`, `expired`, `retry_timeout`, or `unknown_partial` event in the job log. A later `printed` event clears it to `null`.
+
 ### `GET /jobs?limit=20`
 
 Recent job log: `id`, `sender`, `document_type`, `queued_at`, `printed_at`, `status`, `paper_used_mm`, `renderer_version` (the renderer that produced the original output), `reprint_mode` (`"png_cached"` if the rendered PNG is still in the 7-day cache; `"json_rerender"` if it'll be re-rendered from stored JSON).
@@ -484,6 +486,7 @@ What gets printed, when, and from which sources is **explicitly out of scope for
 | Render exceeds memory/time/height guard | Request fails before durable acceptance; response is 413 for configured size guards or 503 if the render worker is unhealthy |
 | Service restart after 202 | Durable job log is replayed; queued/retry jobs keep original order |
 | Crash or USB failure after bytes were sent | Job is marked `unknown_partial` and is not auto-reprinted, because the service cannot know how much paper was consumed. A USB I/O error is caught in the worker. For a crash or power loss, the worker's fsynced `printing` record is still the job's latest event on restart, and replay marks the job `unknown_partial` instead of re-enqueueing it |
+| Job log write fails after the chunks were sent | The job is not retried, because its paper is already out. Its latest event stays `printing`, the worker stops selecting it for the rest of the process, and the next restart marks it `unknown_partial` |
 | Cache eviction race during reprint | Falls back from cached PNG to JSON re-render; if both artifacts are gone, returns `410 Gone` |
 | Pi clock unsynchronized | `/healthz.clock_synchronized` is false; worker does not expire jobs on `expires_at` until time sync returns, avoiding false stale drops |
 | Renderer bug for new block type | Caught in CI via `/test` endpoint sample; fallback to "[unsupported block]" placeholder rather than failing the whole job |

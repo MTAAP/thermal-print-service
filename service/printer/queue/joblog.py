@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from .jsonl import append_line
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -102,6 +104,7 @@ class JobRecord:
         return cls(event="unknown_partial", job_id=job_id, ts=_now(), detail=detail)
 
 
+_ERROR_EVENTS: set[str] = {"retry", "expired", "retry_timeout", "unknown_partial"}
 _TERMINAL: set[str] = {"printed", "expired", "retry_timeout", "unknown_partial"}
 
 
@@ -118,19 +121,7 @@ class JobLog:
         return json.dumps({k: v for k, v in asdict(record).items() if v is not None})
 
     def append(self, record: JobRecord) -> None:
-        data = (self._serialize(record) + "\n").encode("utf-8")
-        with open(self._path, "ab+") as f:
-            # Power loss mid-append can leave a torn final line with no
-            # newline. Writing straight after it would fuse both into one
-            # unparseable line, and replay would drop this record too.
-            # Terminate the fragment so only it is lost.
-            if f.seek(0, os.SEEK_END) > 0:
-                f.seek(-1, os.SEEK_END)
-                if f.read(1) != b"\n":
-                    data = b"\n" + data
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
+        append_line(self._path, self._serialize(record))
 
     def replay(self) -> Iterator[JobRecord]:
         with open(self._path, encoding="utf-8") as f:
@@ -173,6 +164,16 @@ class JobLog:
                 latest[r.job_id] = r.event
         return [r.job_id for r in self.pending_after_replay()
                 if latest.get(r.job_id) == "printing"]
+
+    def last_error(self) -> str | None:
+        """Detail of the latest failure event, cleared by any later ``printed``."""
+        latest: str | None = None
+        for r in self.replay():
+            if r.event == "printed":
+                latest = None
+            elif r.event in _ERROR_EVENTS:
+                latest = r.detail or r.event
+        return latest
 
     def prune(self, *, max_records: int, max_bytes: int) -> None:
         """Drop records for the oldest terminal jobs until under both limits.
