@@ -79,13 +79,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                 latest = r.ts
         return latest
 
-    def _last_error() -> str | None:
-        latest: str | None = None
-        for r in log.replay():
-            if r.event in {"retry", "expired", "retry_timeout", "unknown_partial"}:
-                latest = r.detail or r.event
-        return latest
-
     def _oldest_pending_age_s() -> int | None:
         pending = log.pending_after_replay()
         if not pending:
@@ -105,7 +98,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         status_reader=StatusReader(supports_status=False),
         queue_depth=lambda: len(log.pending_after_replay()),
         last_print_at=_last_print_at,
-        last_error=_last_error,
+        last_error=log.last_error,
         oldest_pending_age_s=_oldest_pending_age_s,
         process_started_at=started_at,
         clock_now=lambda: time.time(),

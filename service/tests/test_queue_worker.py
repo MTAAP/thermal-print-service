@@ -569,6 +569,99 @@ async def test_in_flight_recovery_survives_torn_log_tail(state_dir):
 
 
 @pytest.mark.asyncio
+async def test_failed_printed_write_never_prints_the_job_again(state_dir, monkeypatch):
+    """Every chunk is on paper but the ``printed`` record fails to write.
+    The job must not become ``retry``: neither the next wakeup nor a
+    restart may print it again."""
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+
+    for job_id in ("JOB-P", "JOB-Q"):
+        log.append(JobRecord.accepted(
+            job_id=job_id, sender=None, document_type="t",
+            idempotency_key=None, payload_hash=job_id, kind="raw",
+            estimated_paper_mm=10, renderer_version="0.1.0",
+        ))
+    cache.put_chunks("JOB-P", [b"P"])
+    cache.put_chunks("JOB-Q", [b"Q"])
+
+    real_append = log.append
+
+    def append_failing_printed(record):
+        if record.event == "printed":
+            raise OSError(28, "No space left on device")
+        real_append(record)
+
+    monkeypatch.setattr(log, "append", append_failing_printed)
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.05, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=make_options_lookup(options_from_replay(log)))
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.enqueue("JOB-Q")
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    assert transport.payloads == [b"P", b"Q"]
+    assert "retry" not in [r.event for r in log.replay()]
+
+    restarted_transport = FakeTransport()
+    restarted_log = JobLog(state_dir / "log.jsonl")
+    restarted = PrintWorker(
+        WorkerDeps(joblog=restarted_log, png_cache=cache, transport=restarted_transport,
+                   retry_interval_s=0.05, max_retry_age_s=10.0),
+        options_lookup=make_options_lookup(options_from_replay(restarted_log)),
+    )
+    await restarted.start()
+    await asyncio.sleep(0.1)
+    await restarted.stop()
+
+    assert restarted_transport.calls == []
+    assert restarted_log.pending_after_replay() == []
+
+
+@pytest.mark.asyncio
+async def test_failed_retry_write_does_not_strand_an_unprinted_job(state_dir, monkeypatch):
+    """The first chunk fails before any paper moves and the ``retry`` record
+    fails to write once. The job must stay retryable, not be abandoned."""
+    log = JobLog(state_dir / "log.jsonl")
+    cache = PngCache(state_dir / "cache", max_bytes=10_000_000, ttl_s=3600)
+    transport = FakeTransport()
+    transport.unavailable_until = 1
+
+    job_id = "JOB-R"
+    log.append(JobRecord.accepted(
+        job_id=job_id, sender=None, document_type="t",
+        idempotency_key=None, payload_hash="x", kind="raw",
+        estimated_paper_mm=10, renderer_version="0.1.0",
+    ))
+    cache.put_chunks(job_id, [b"R"])
+
+    real_append = log.append
+    failed: list[str] = []
+
+    def append_failing_first_retry(record):
+        if record.event == "retry" and not failed:
+            failed.append(record.event)
+            raise OSError(5, "Input/output error")
+        real_append(record)
+
+    monkeypatch.setattr(log, "append", append_failing_first_retry)
+    deps = WorkerDeps(joblog=log, png_cache=cache, transport=transport,
+                      retry_interval_s=0.05, max_retry_age_s=10.0)
+    worker = PrintWorker(deps, options_lookup=make_options_lookup(options_from_replay(log)))
+    await worker.start()
+    await asyncio.sleep(0.1)
+    await worker.enqueue(job_id)
+    await asyncio.sleep(0.1)
+    await worker.stop()
+
+    assert transport.payloads == [b"R", b"R"]
+    assert [r.event for r in log.replay()][-1] == "printed"
+
+
+@pytest.mark.asyncio
 async def test_worker_requeues_retrying_job_on_restart(state_dir):
     """A job whose last attempt ended in ``retry`` never put paper through,
     so a restart replays it as before."""

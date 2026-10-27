@@ -46,3 +46,18 @@ def test_no_sender_uses_anonymous_scope(state_dir):
              job_id="01J", queued_at="2026-05-09T00:00:00Z")
     hit = c.lookup(scope=None, key="K", payload_hash="A")
     assert hit is not None
+
+
+def test_record_after_torn_tail_survives_reload(state_dir):
+    """Power loss can leave a half-written last line. The next record must
+    land on its own line so a restart still finds it."""
+    p = state_dir / "idem.jsonl"
+    c = IdempotencyCache(p, ttl_s=3600)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write('{"scope": "cron", "key": "torn", "payl')
+    c.record(scope="cron", key="K", payload_hash="A",
+             job_id="01J", queued_at="2026-10-27T00:00:00Z")
+
+    reloaded = IdempotencyCache(p, ttl_s=3600)
+    hit = reloaded.lookup(scope="cron", key="K", payload_hash="A")
+    assert hit is not None and hit.job_id == "01J"

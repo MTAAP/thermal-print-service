@@ -3,6 +3,19 @@
 Each removal/rename gets a one-line entry with the renderer version it landed in
 and the migration hint surfaced in 400 responses.
 
+## v0.10.2
+
+Three durability and health fixes. No schema change.
+
+- `/healthz` `last_error` clears once a later job prints. Before this, a
+  September error kept showing after successful prints.
+- If the job log can't record `printed` after every chunk is on paper, the
+  worker no longer logs `retry`. That `retry` printed the job again on the next
+  wakeup or restart. The job keeps `printing` as its latest event and ends as
+  `unknown_partial` on restart.
+- The idempotency cache appends through the same torn-line-safe writer as the
+  job log, so a power cut can't swallow the next record.
+
 ## v0.10.1
 
 A crash or power loss mid-print no longer reprints the job on restart.

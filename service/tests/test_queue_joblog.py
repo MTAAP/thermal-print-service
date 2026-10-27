@@ -181,3 +181,19 @@ def test_prune_never_drops_pending_jobs(state_dir):
     # DONE is dropped; PEND-1 and PEND-2 always stay.
     assert "DONE" not in remaining
     assert "PEND-1" in remaining and "PEND-2" in remaining
+
+
+def test_last_error_clears_after_a_later_print(state_dir):
+    """/healthz ``last_error`` must not keep reporting a failure that a
+    later successful print has already put behind it."""
+    log = JobLog(state_dir / "log.jsonl")
+    log.append(_accepted("A", "2026-09-10T07:00:00Z"))
+    log.append(JobRecord.retry(job_id="A", detail="failed to open /dev/usb/lp0"))
+    assert log.last_error() == "failed to open /dev/usb/lp0"
+
+    log.append(_accepted("B", "2026-10-27T15:00:00Z"))
+    log.append(_printed("B", "2026-10-27T15:00:01Z"))
+    assert log.last_error() is None
+
+    log.append(JobRecord.expired(job_id="A", detail="past expires_at"))
+    assert log.last_error() == "past expires_at"
